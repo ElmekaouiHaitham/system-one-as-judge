@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beavertails-judge-cascade"
+version = "0.1.0"
+description = "A reproducible Clef / Gemini safety judging experiment"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.32,<3", "python-dotenv>=1,<2", "numpy>=2,<3", "pandas>=2.2,<4", "matplotlib>=3.9,<4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+judge-experiment = "judge_exp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

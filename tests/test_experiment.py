@@ -1,0 +1,66 @@
+import numpy as np
+import pytest
+
+from judge_exp.common import CATEGORY
+from judge_exp.data import prompt_key, sample
+from judge_exp.providers import parse_clef, parse_gemini, probability
+from judge_exp.routing import route, select_thresholds
+from judge_exp.report import metrics
+
+
+def test_probability_validation():
+    for invalid in [True, -0.1, 1.1, float("nan"), "0.9"]:
+        with pytest.raises(ValueError):
+            probability(invalid)
+
+
+def test_provider_contracts_and_blocks():
+    assert parse_clef({"success": True, "result": {"answers": {"category_positive": .82},
+                       "usage": {"input_tokens": 400}}})[0] == .82
+    assert parse_clef({"answers": {"category_positive": .2}})[0] == .2
+    assert parse_gemini({"candidates": [{"finishReason": "STOP", "content": {"parts": [
+        {"text": '{"label":"positive"}'}]}}]})[0] == 1
+    for body in [{}, {"candidates": [{"finishReason": "SAFETY"}]},
+                 {"candidates": [{"finishReason": "MAX_TOKENS"}]}]:
+        with pytest.raises(ValueError):
+            parse_gemini(body)
+
+
+def test_routing_boundary_and_failure():
+    assert route([0, 1, -1], [.8, .8, 0], .8, .9).tolist() == [False, True, True]
+    assert route([0, 1], [1, 1], 1.000001, 1.000001).all()
+
+
+def test_threshold_selection_and_adaptive_benefit():
+    y = np.array([0, 0, 1, 1])
+    c = np.array([0, 0, 1, 1])
+    # One confidently wrong positive verdict; negative predictions are correct.
+    y[3] = 0
+    p = [.6, .7, .6, .9]
+    fixed = select_thresholds(y, c, y, p, [.5, .8, 1.000001], 0)
+    adaptive = select_thresholds(y, c, y, p, [.5, .8, 1.000001], 0, True)
+    assert fixed["dev_accuracy"] == 1
+    assert adaptive["dev_accuracy"] == 1
+    assert adaptive["dev_escalation_rate"] < fixed["dev_escalation_rate"]
+
+
+def test_sampling_no_prompt_overlap_and_correct_controls():
+    rows = []
+    for i in range(40):
+        label, safe = i < 20, 20 <= i < 30
+        rows.append({"prompt": f"Prompt {i}", "response": f"Response {i}",
+                     "category": {CATEGORY: label}, "is_safe": safe})
+    selected = sample(rows + rows, 12, 42, "test", {prompt_key("Prompt 0")})
+    assert len(selected) == len({prompt_key(r["prompt"]) for r in selected}) == 12
+    assert "Prompt 0" not in [r["prompt"] for r in selected]
+    assert sum(r["label"] for r in selected) == 6
+    assert sum(r["control_type"] == "safe_control" for r in selected) == 3
+    assert sum(r["control_type"] == "other_harm_control" for r in selected) == 3
+    assert selected == sample(rows + rows, 12, 42, "test", {prompt_key("Prompt 0")})
+
+
+def test_failures_are_not_silently_dropped():
+    m = metrics(np.array([0, 1, 0, 1]), np.array([0, 1, -1, -1]))
+    assert m["accuracy"] == .5
+    assert m["failure_rate"] == .5
+    assert m["recall"] == .5

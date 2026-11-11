@@ -16,7 +16,8 @@
   "prices_usd_per_million": {
     "clef_input": 0.24,
     "gemini_input": 0.25,
-    "gemini_output": 1.5
+    "gemini_output": 1.5,
+    "gemini_cached_input": 0.025
   },
-  "pricing_checked_on": "2026-11-10"
+  "pricing_checked_on": "2026-11-11"
 }

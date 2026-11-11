@@ -3,14 +3,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .common import ROOT, digest, read_jsonl, write_json
-from .providers import Judges
+from .providers import Judges, ProviderError
 
 
 def bind_run(run, config, policy):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
     samples = {s: read_jsonl(ROOT / "data" / "prepared" / f"{s}.jsonl") for s in ["dev", "test"]}
-    spec = {"config": config, "policy": policy,
+    spec = {"config": config, "policy": policy, "measurement_version": 2,
             "sample_hashes": {s: digest(rows) for s, rows in samples.items()}}
     signature = digest(spec)
     path = run / "manifest.json"
@@ -42,6 +42,9 @@ def collect(run, samples, config, policy, splits, providers, limit=None):
                 try:
                     result.update(judges.judge(provider, row))
                     result["status"] = "ok"
+                except ProviderError as e:
+                    result.update(e.record)
+                    result.update(status="error", error=str(e))
                 except (KeyError, ValueError, RuntimeError) as e:
                     result.update(status="error", error=str(e))
                 except Exception as e:

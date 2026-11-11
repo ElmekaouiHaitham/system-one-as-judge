@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, roc_curve
 
-from .common import write_json
+from .common import write_json, read_jsonl
+from .accounting import summarize_resources
 from .experiment import load_predictions
 from .routing import route, select_thresholds
 
@@ -86,11 +87,7 @@ def analyze(run, samples, config):
     bootstrap = rng.integers(0, len(y), (2000, len(y)))
     for name, pred in predictions.items():
         mask = masks[name]
-        cost = values("gemini", "list_cost_usd") if name == "gemini" else values("clef", "list_cost_usd").copy()
-        latency = values("gemini", "latency_s") if name == "gemini" else values("clef", "latency_s").copy()
-        if name in policies:
-            cost += np.where(mask, values("gemini", "list_cost_usd"), 0)
-            latency += np.where(mask, values("gemini", "latency_s"), 0)
+        resources = summarize_resources(results["clef"], results["gemini"], mask, name == "gemini")
         accuracy_samples = (y == pred)[bootstrap].mean(axis=1)
         difference = ((y == pred).astype(int) - (y == gemini).astype(int))[bootstrap].mean(axis=1)
         rows.append({"system": name, **metrics(y, pred),
@@ -102,11 +99,28 @@ def analyze(run, samples, config):
                      "accuracy_difference_vs_gemini_ci_low": float(np.quantile(difference, .025)),
                      "accuracy_difference_vs_gemini_ci_high": float(np.quantile(difference, .975)),
                      "escalation_rate": float(mask.mean()) if name != "gemini" else 1.0,
-                     "list_cost_usd": float(cost.sum()) if np.isfinite(cost).all() else None,
-                     "mean_latency_s": float(latency.mean()) if np.isfinite(latency).all() else None})
+                     **resources})
     summary = pd.DataFrame(rows)
     summary.to_csv(out / "metrics.csv", index=False)
     write_json(out / "metrics.json", rows)
+    # Unlike per-system test comparisons, this ledger includes development,
+    # both judges, failures and repeated calls from resumed collection.
+    ledger = []
+    for split in ("dev", "test"):
+        for provider in ("clef", "gemini"):
+            records = read_jsonl(run / f"{split}_{provider}.jsonl")
+            known = sum(r.get("known_list_cost_usd", r.get("list_cost_usd")) or 0 for r in records)
+            unknown = sum(r.get("list_cost_usd") is None for r in records)
+            ledger.append({"split": split, "provider": provider, "collection_calls": len(records),
+                           "http_attempts": sum(len(r.get("attempts", [])) or 1 for r in records),
+                           "failed_verdicts": sum(r["status"] != "ok" for r in records),
+                           "known_list_cost_subtotal_usd": known, "unpriced_calls": unknown,
+                           "complete_list_cost_usd": known if not unknown else None})
+    write_json(out / "collection_accounting.json", {
+        "basis": "standard uncached token list prices; no credits or free-tier deductions; not an invoice",
+        "records": ledger, "known_list_cost_subtotal_usd": sum(r["known_list_cost_subtotal_usd"] for r in ledger),
+        "complete_list_cost_usd": sum(r["complete_list_cost_usd"] for r in ledger) if all(r["complete_list_cost_usd"] is not None for r in ledger) else None,
+    })
     details = pd.DataFrame([{k: r[k] for k in ("id", "label", "control_type", "source_row")} for r in samples["test"]])
     for name, pred in predictions.items():
         details[name] = pred

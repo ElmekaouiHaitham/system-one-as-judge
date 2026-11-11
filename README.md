@@ -83,7 +83,7 @@ that snapshot instead of resolving the version ranges, install with
 
 ## Recommended hosting and prices
 
-Checked November 10, 2026:
+Checked November 11, 2026:
 
 | Model | Hosted option | USD per million tokens, input / output |
 |---|---|---|
@@ -195,7 +195,8 @@ Under `runs/main/report/`:
 
 - `metrics.csv/json`: accuracy, precision/recall/F1, false-positive and miss rates,
   failure rate, bootstrap accuracy intervals and paired accuracy differences
-  versus Gemini, routing rate, estimated list cost, mean latency.
+  versus Gemini, routing rate, estimated list cost, cost per 1,000 pairs, mean,
+  median, and 95th-percentile latency, and the count of fully priced pairs.
 - `predictions.csv`: IDs and per-system verdicts for tracing disagreements.
 - `control_slices.csv`: results for positives and safe controls.
 - `cascade_diagnostics.json`: fallback corrections, regressions, shared errors.
@@ -213,18 +214,75 @@ only a label, so Gemini and cascade AUROCs are left unavailable; no comparable
 continuous score is invented from their binary decisions. AUROC measures ranking,
 not probability calibration. See [the metric documentation](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html).
 
+`collection_accounting.json` separately sums all development/test collection
+records, including failed verdicts and repeated calls after resuming. It reports
+a known cost subtotal and unpriced calls; a complete total is unavailable if any
+call has unknown usage. It is still an estimate at list prices, not your bill.
+
 `routing_policy.json` records the thresholds chosen on development.
 The 2,000-resample bootstrap is over sampled test items, conditional on the
 sampling design; it does not account for annotation uncertainty or model drift.
 
-Both judges are called on all items to make a fair standalone comparison and
-allow offline routing simulation. The benchmark therefore pays for ALL calls.
-Cascade list costs are counterfactual sums of Clef plus only escalated Gemini
-calls. Latency is similarly simulated for sequential routing, includes retries
-inside the request wrapper, and excludes intentional quota pacing. Failed
-requests, setup overhead, free-tier discounts, and billing adjustments are not
-reconstructed. Read actual spending from provider dashboards. Do not call these
-figures measured end-to-end deployed cascade latency or actual invoices.
+## How latency and cost are measured
+
+**Latency:** a monotonic `time.perf_counter()` timer starts immediately before the
+HTTP request wrapper and stops after the final response has been read and decoded.
+`latency_s` includes network travel, provider queueing/inference, response transfer,
+all retry requests, and retry backoff. It excludes deliberate quota pacing before
+the wrapper, input preparation, file writes, dataset downloads, and plotting.
+This is client-observed API latency, not pure model inference time.
+
+Each record also retains every HTTP attempt's duration/status/usage,
+`request_latency_s` (sum of attempt durations), `retry_wait_s`, and `retry_count`.
+Transport errors, HTTP errors, blocked verdicts, and invalid JSON/verdicts preserve
+available timing and usage. A timed-out request may have incurred a charge even
+when no token counts were received; its cost stays unknown.
+
+**Cost:** use provider-reported token counts, including the input policy/schema,
+and configurable rates per million tokens:
+
+```text
+Clef cost   = input_tokens × clef_input_rate / 1,000,000
+Gemini cost = (prompt_tokens × gemini_input_rate
+              + (candidate_tokens + thinking_tokens) × gemini_output_rate)
+              / 1,000,000
+```
+
+Gemini's `promptTokenCount` already includes cached tokens. The comparison column
+`list_cost_usd` deliberately prices all prompt tokens at the standard uncached
+rate for a consistent baseline. Saved request records also contain
+`cache_adjusted_cost_usd`: subtract cached tokens from standard input and price
+them once at `gemini_cached_input`. This uses observed implicit cache hits; cache
+hits could differ when actually deploying selective routing. Missing usage stays
+unknown instead of being silently priced as zero. Returned thinking tokens count
+as output. Token usage and raw responses remain available for auditing. See
+[Gemini usage metadata](https://ai.google.dev/api/generate-content#UsageMetadata).
+
+Every retry's reported usage contributes to the logical call's cost. If any
+attempt lacks usage, only the known subtotal is available and the complete cost
+is unknown. A self-hosted Clef endpoint is explicitly unpriced: Cloudflare's token
+rates do not estimate Modal's GPU-time bill.
+
+**Cascade simulation:** for each test pair, add Clef's measured latency/cost plus
+Gemini's ONLY if that pair is escalated. Sum per-pair costs; report mean, median,
+and p95 of per-pair latency sums. Never add the two models' p95 values. Unknown
+usage on a Gemini call that would not be used does not affect the cascade total.
+
+Both judges are called on all development and test items for the benchmark.
+Its collection cost therefore includes both models on all 400 pairs. Per-system
+test comparisons concern 300 pairs; cascade resource totals are counterfactual
+sequential sums from cached responses. In this context, saved responses are a
+local reuse mechanism, distinct from provider prompt caching. The benchmark does
+not make another API call when reusing a successful saved response.
+
+The optional live `cascade` command additionally records `wall_latency_s` around
+both actual stages and routing, including any quota pacing, and
+`request_path_latency_s` excluding that pacing. Free-tier allowances, credits,
+taxes, explicit cache-storage charges, and provider billing adjustments are not
+included. Read actual spending from provider dashboards. These are small-sample
+measurements affected by network and service conditions, not throughput benchmarks
+or invoices. No warm-up requests are silently discarded. Measurement version 2
+is recorded in new run manifests; older runs must use a new run directory.
 
 ## Actually route new pairs selectively
 

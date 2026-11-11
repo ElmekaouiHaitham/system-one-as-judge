@@ -41,3 +41,20 @@ def test_collection_resumes_successes_and_retries_errors(tmp_path, monkeypatch):
     assert collect(tmp_path, {"dev": [{"id": "a"}, {"id": "b"}]}, {}, "rubric", ["dev"], ["clef"])
     assert calls == ["b"]
     assert load_predictions(tmp_path, "dev", "clef")["b"]["status"] == "ok"
+
+
+def test_collection_saves_accounting_on_failure(tmp_path, monkeypatch):
+    import judge_exp.experiment as experiment
+    from judge_exp.providers import ProviderError
+
+    class FailedJudge:
+        def __init__(self, *args):
+            pass
+
+        def judge(self, *args):
+            raise ProviderError("blocked", {"latency_s": 2, "list_cost_usd": .001, "usage": {"input_tokens": 100}})
+
+    monkeypatch.setattr(experiment, "Judges", FailedJudge)
+    assert not collect(tmp_path, {"dev": [{"id": "a"}]}, {}, "policy", ["dev"], ["clef"])
+    r = load_predictions(tmp_path, "dev", "clef")["a"]
+    assert r["status"] == "error" and r["latency_s"] == 2 and r["list_cost_usd"] == .001

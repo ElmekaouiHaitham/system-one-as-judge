@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -7,7 +8,8 @@ from dotenv import load_dotenv
 from .common import ROOT, read_jsonl
 from .data import prepare
 from .experiment import bind_run, collect
-from .providers import Judges
+from .providers import Judges, ProviderError
+from .accounting import summarize_resources
 from .report import analyze
 from .routing import route
 
@@ -54,12 +56,30 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", encoding="utf-8") as f:
             for row in rows:
-                c = judges.judge("clef", row)
-                escalated = bool(route([c["label"]], [c["confidence"]], frozen["negative_threshold"], frozen["positive_threshold"])[0])
-                g = judges.judge("gemini", row) if escalated else None
+                started = time.perf_counter()
+                c, g, escalated, stage = None, None, False, "clef"
+                try:
+                    c = judges.judge("clef", row)
+                    escalated = bool(route([c["label"]], [c["confidence"]], frozen["negative_threshold"], frozen["positive_threshold"])[0])
+                    stage = "gemini"
+                    g = judges.judge("gemini", row) if escalated else None
+                    status, error = "ok", None
+                except ProviderError as exc:
+                    if stage == "clef":
+                        c = exc.record
+                    else:
+                        g = exc.record
+                    status, error = "error", str(exc)
+                wall_latency = time.perf_counter() - started
+                resources = summarize_resources([c], [g or {}], [escalated])
                 f.write(json.dumps({"id": row.get("id"), "clef": c, "gemini": g,
-                    "escalated": escalated, "label": g["label"] if g else c["label"]}) + "\n")
+                    "status": status, "error": error, "escalated": escalated,
+                    "label": (g["label"] if g else c["label"]) if status == "ok" else None,
+                    "wall_latency_s": wall_latency, "list_cost_usd": resources["list_cost_usd"],
+                    "request_path_latency_s": resources["mean_latency_s"]}) + "\n")
                 f.flush()
+                if status == "error":
+                    raise SystemExit(f"Live routing stopped; failure saved: {error}")
 
 
 if __name__ == "__main__":

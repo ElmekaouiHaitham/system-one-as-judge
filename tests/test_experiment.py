@@ -54,9 +54,20 @@ def test_sampling_no_prompt_overlap_and_correct_controls():
     assert len(selected) == len({prompt_key(r["prompt"]) for r in selected}) == 12
     assert "Prompt 0" not in [r["prompt"] for r in selected]
     assert sum(r["label"] for r in selected) == 6
-    assert sum(r["control_type"] == "safe_control" for r in selected) == 3
-    assert sum(r["control_type"] == "other_harm_control" for r in selected) == 3
+    assert sum(r["control_type"] == "safe_control" for r in selected) == 6
+    assert all(r["label"] == 1 or r["is_safe"] for r in selected)
     assert selected == sample(rows + rows, 12, 42, "test", {prompt_key("Prompt 0")})
+
+
+def test_excluded_response_does_not_block_safe_response_for_same_prompt():
+    rows = [
+        {"prompt": "shared", "response": "excluded", "category": {CATEGORY: False}, "is_safe": False},
+        {"prompt": "shared", "response": "safe", "category": {CATEGORY: False}, "is_safe": True},
+        {"prompt": "positive", "response": "positive", "category": {CATEGORY: True}, "is_safe": False},
+    ]
+    for seed in range(10):
+        selected = sample(rows, 2, seed, "test")
+        assert {r["response"] for r in selected} == {"safe", "positive"}
 
 
 def test_failures_are_not_silently_dropped():

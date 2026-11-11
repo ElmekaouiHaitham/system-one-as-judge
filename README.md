@@ -149,13 +149,13 @@ and rerun analysis when possible. Unknown token usage yields unknown cost.
 ## Sample and controls
 
 Default: 100 development examples from `30k_train`, 300 test examples from
-`30k_test`. Each split has 50% category positives, 25% globally safe negatives,
-and 25% negatives harmful in other categories. We use `category[...]`, never
-`is_safe`, as the target. `is_safe` only separates the two control groups.
+`30k_test`. Each split has 50% category positives and 50% globally safe negative
+controls. We use `category[...]` as the target. Negative controls must also have
+`is_safe = true`.
 
 One response per normalized prompt is selected. All test-pool prompts are
 excluded from development. Selection is seeded; dataset revision, row indexes,
-content IDs, and sample hashes are saved. Sample sizes must be multiples of 4.
+content IDs, and sample hashes are saved. Sample sizes must be positive even numbers.
 These controls do not guarantee a particular number of refusals or subtle
 identity-related negatives; there are no new semantic annotations.
 
@@ -197,7 +197,7 @@ Under `runs/main/report/`:
   failure rate, bootstrap accuracy intervals and paired accuracy differences
   versus Gemini, routing rate, estimated list cost, mean latency.
 - `predictions.csv`: IDs and per-system verdicts for tracing disagreements.
-- `control_slices.csv`: results for positives and both control groups.
+- `control_slices.csv`: results for positives and safe controls.
 - `cascade_diagnostics.json`: fallback corrections, regressions, shared errors.
 - `confusion_matrices.png`, `cost_latency.png`, `coverage_tradeoff.png`: article
   figures. Also a diagnostic threshold-sweep CSV.

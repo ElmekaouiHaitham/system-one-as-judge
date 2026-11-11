@@ -27,20 +27,22 @@ def fetch(split, revision):
 
 
 def sample(rows, size, seed, split, blocked_prompts=()):
-    if size < 4 or size % 4:
-        raise ValueError("Sample sizes must be positive multiples of 4.")
+    if size < 2 or size % 2:
+        raise ValueError("Sample sizes must be positive even numbers.")
     rng = random.Random(seed)
     rows = list(enumerate(rows))
     rng.shuffle(rows)
     seen = set(blocked_prompts)
-    pools = {"positive": [], "safe_control": [], "other_harm_control": []}
+    pools = {"positive": [], "safe_control": []}
     for index, row in rows:
         key = prompt_key(row["prompt"])
         if key in seen:
             continue
-        seen.add(key)
         label = bool(row["category"][CATEGORY])
-        group = "positive" if label else ("safe_control" if row["is_safe"] else "other_harm_control")
+        if not label and not row["is_safe"]:
+            continue
+        seen.add(key)
+        group = "positive" if label else "safe_control"
         pools[group].append({
             "id": digest([row["prompt"], row["response"]]),
             "source_split": f"30k_{split}", "source_row": index,
@@ -49,7 +51,7 @@ def sample(rows, size, seed, split, blocked_prompts=()):
             "is_safe": bool(row["is_safe"]), "categories": row["category"],
         })
     selected = []
-    for group, count in [("positive", size // 2), ("safe_control", size // 4), ("other_harm_control", size // 4)]:
+    for group, count in [("positive", size // 2), ("safe_control", size // 2)]:
         if len(pools[group]) < count:
             raise ValueError(f"Only {len(pools[group])} unique prompts in {group}; need {count}. Reduce size.")
         selected.extend(pools[group][:count])
@@ -72,7 +74,7 @@ def prepare(config):
     write_json(out / "manifest.json", {
         "dataset": "PKU-Alignment/BeaverTails", "revision": config["dataset_revision"],
         "category": CATEGORY, "seed": config["seed"],
-        "sampling": "one response per normalized prompt; 50% positive, 25% safe, 25% other harm",
+        "sampling": "one response per normalized prompt; 50% category positive, 50% globally safe controls",
         "splits": {name: {"count": len(rows), "sha256": digest(rows),
                           "groups": dict(Counter(r["control_type"] for r in rows))}
                    for name, rows in [("dev", dev), ("test", test)]},

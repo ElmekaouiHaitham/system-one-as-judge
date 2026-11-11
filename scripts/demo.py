@@ -18,7 +18,7 @@ def main():
             p = float(rng.beta(4, 2) if y else rng.beta(2, 4))
             item_id = digest(["synthetic", split, i])
             rows.append({"id": item_id, "label": y, "source_row": i,
-                "control_type": "positive" if y else ("safe_control" if i % 4 == 0 else "other_harm_control")})
+                "control_type": "positive" if y else "safe_control"})
             c.append({"id": item_id, "status": "ok", "label": int(p >= .5),
                 "confidence": max(p, 1-p), "probability": p, "latency_s": .2,
                 "list_cost_usd": .00012})

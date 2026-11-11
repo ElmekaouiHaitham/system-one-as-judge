@@ -59,9 +59,11 @@ def summarize_resources(clef, gemini, escalation=None, gemini_only=False):
     import numpy as np
     n = len(clef)
     escalation = np.zeros(n, dtype=bool) if escalation is None else np.asarray(escalation)
-    costs, latencies = [], []
+    costs, latencies, retried = [], [], []
     for i in range(n):
         stages = [gemini[i]] if gemini_only else [clef[i]] + ([gemini[i]] if escalation[i] else [])
+        retries = [s.get("retry_count") for s in stages]
+        retried.append(any(r > 0 for r in retries) if all(r is not None for r in retries) else None)
         for key, values in [("list_cost_usd", costs), ("latency_s", latencies)]:
             parts = [s.get(key) for s in stages]
             values.append(sum(parts) if all(v is not None and math.isfinite(v) for v in parts) else None)
@@ -71,6 +73,7 @@ def summarize_resources(clef, gemini, escalation=None, gemini_only=False):
         "list_cost_usd": sum(costs) if complete_cost else None,
         "cost_per_1000_pairs_usd": sum(costs) / n * 1000 if complete_cost else None,
         "resource_priced_n": sum(c is not None for c in costs),
+        "retried_pair_rate": sum(retried) / n if all(r is not None for r in retried) else None,
         "mean_latency_s": float(np.mean(latencies)) if complete_time else None,
         "median_latency_s": float(np.median(latencies)) if complete_time else None,
         "p95_latency_s": float(np.quantile(latencies, .95)) if complete_time else None,

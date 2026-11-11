@@ -196,7 +196,8 @@ Under `runs/main/report/`:
 - `metrics.csv/json`: accuracy, precision/recall/F1, false-positive and miss rates,
   failure rate, bootstrap accuracy intervals and paired accuracy differences
   versus Gemini, routing rate, estimated list cost, cost per 1,000 pairs, mean,
-  median, and 95th-percentile latency, and the count of fully priced pairs.
+  median, and 95th-percentile latency, the fraction of pairs requiring a retry,
+  and the count of fully priced pairs. The main latency chart uses median and p95.
 - `predictions.csv`: IDs and per-system verdicts for tracing disagreements.
 - `control_slices.csv`: results for positives and safe controls.
 - `cascade_diagnostics.json`: fallback corrections, regressions, shared errors.
@@ -283,6 +284,24 @@ included. Read actual spending from provider dashboards. These are small-sample
 measurements affected by network and service conditions, not throughput benchmarks
 or invoices. No warm-up requests are silently discarded. Measurement version 2
 is recorded in new run manifests; older runs must use a new run directory.
+
+### Relation to the two papers
+
+[JEV-as-a-Judge, Section 4 and Appendix C](https://arxiv.org/html/2609.26550v6)
+uses per-outcome timing that includes network/provider/retry time and excludes
+initial pacing. Its headline statistics are median and p95 from a fixed 120-item
+panel, with a persistent client, eight workers, and accounting outside the timer.
+We adopt that latency definition and those headline statistics. Our simpler
+experiment uses the same 300 test inputs for both judges, one request at a time,
+with file writes and cost accounting outside the request timer. We do not claim
+to replicate its concurrency or its separate timing-panel experiment.
+
+[Decision Models vs. LLMs as Rubric Judges, Section 4.2 and Appendix B](https://arxiv.org/html/2609.29769v3)
+primarily compares panel wall time, including checkpoint writes; concurrency and
+rate limits affect those results. That is a different measurement from our
+per-pair API latency. We retain retry frequency for context and do not call a sum
+of saved API durations measured batch wall time or throughput. Retried pairs
+stay in the primary latency results; no slow requests are silently filtered out.
 
 ## Actually route new pairs selectively
 

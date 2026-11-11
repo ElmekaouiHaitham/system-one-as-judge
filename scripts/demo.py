@@ -21,9 +21,9 @@ def main():
                 "control_type": "positive" if y else "safe_control"})
             c.append({"id": item_id, "status": "ok", "label": int(p >= .5),
                 "confidence": max(p, 1-p), "probability": p, "latency_s": .2,
-                "list_cost_usd": .00012})
+                "list_cost_usd": .00012, "retry_count": 0})
             g.append({"id": item_id, "status": "ok", "label": y if rng.random() > .12 else 1-y,
-                "latency_s": .8, "list_cost_usd": .00018})
+                "latency_s": .8, "list_cost_usd": .00018, "retry_count": 0})
         samples[split] = rows
         write_jsonl(run / f"{split}_clef.jsonl", c)
         write_jsonl(run / f"{split}_gemini.jsonl", g)

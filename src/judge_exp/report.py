@@ -172,10 +172,15 @@ def analyze(run, samples, config):
     fig.savefig(out / "confusion_matrices.png"); plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-    for ax, col, title in zip(axes, ["list_cost_usd", "mean_latency_s"],
-                              ["Estimated list cost (USD, test sample)", "Mean request latency (seconds)"]):
-        ax.bar(summary.system, pd.to_numeric(summary[col]), color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
-        ax.set_title(title); ax.tick_params(axis="x", rotation=20)
+    axes[0].bar(summary.system, pd.to_numeric(summary.list_cost_usd), color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
+    axes[0].set_title("Estimated list cost (USD, test sample)")
+    positions = np.arange(len(summary))
+    axes[1].bar(positions - .18, pd.to_numeric(summary.median_latency_s), width=.36, label="Median")
+    axes[1].bar(positions + .18, pd.to_numeric(summary.p95_latency_s), width=.36, label="p95")
+    axes[1].set(xticks=positions, xticklabels=summary.system, title="Outcome latency, including retries (seconds)")
+    axes[1].legend()
+    for ax in axes:
+        ax.tick_params(axis="x", rotation=20)
     fig.suptitle("Cascade totals are simulated from cached calls; no free-tier discount")
     fig.savefig(out / "cost_latency.png"); plt.close(fig)
 

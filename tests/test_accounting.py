@@ -29,13 +29,14 @@ def test_missing_usage_is_unknown_and_self_hosting_is_unpriced():
 
 
 def test_cascade_counts_only_required_calls_and_reports_latency_percentiles():
-    c = [{"list_cost_usd": .01, "latency_s": 1}, {"list_cost_usd": .02, "latency_s": 2}]
-    g = [{}, {"list_cost_usd": .04, "latency_s": 4}]
+    c = [{"list_cost_usd": .01, "latency_s": 1, "retry_count": 0}, {"list_cost_usd": .02, "latency_s": 2, "retry_count": 0}]
+    g = [{}, {"list_cost_usd": .04, "latency_s": 4, "retry_count": 1}]
     r = summarize_resources(c, g, [False, True])
     assert r["list_cost_usd"] == pytest.approx(.07)
     assert r["cost_per_1000_pairs_usd"] == pytest.approx(35)
     assert r["mean_latency_s"] == r["median_latency_s"] == 3.5
     assert r["p95_latency_s"] == pytest.approx(5.75)
+    assert r["retried_pair_rate"] == .5
     assert summarize_resources(c, g, [True, True])["list_cost_usd"] is None
 
 

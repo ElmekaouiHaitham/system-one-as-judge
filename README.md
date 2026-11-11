@@ -62,7 +62,7 @@ On Windows, if activation is unavailable, use `.\.venv\Scripts\python.exe` in
 place of `python` in each command; changing your execution policy is unnecessary.
 
 Edit `.env` with your Cloudflare account ID, a Workers AI API token (Workers AI
-Read permission), and a Google AI Studio Gemini API key. Do not share this file.
+Read and Edit permissions), and a Google AI Studio Gemini API key. Do not share this file.
 The code reads keys from environment variables or `.env`. No credentials are
 included in run manifests. Never commit `data/`, `runs/`, or `.env`.
 

@@ -11,6 +11,14 @@ def usage_cost(provider, usage, rates, self_hosted=False):
     if provider == "clef":
         inputs = count(usage.get("input_tokens", usage.get("prompt_tokens")))
         outputs, cached = 0, 0
+    elif provider == "bedrock":
+        # Converse inputTokens excludes cached reads/writes. OutputTokens
+        # already includes generated reasoning; never add it a second time.
+        uncached = count(usage.get("inputTokens"))
+        cached = count(usage.get("cacheReadInputTokens", 0))
+        writes = count(usage.get("cacheWriteInputTokens", 0))
+        inputs = uncached + cached + writes if all(v is not None for v in (uncached, cached, writes)) else None
+        outputs = count(usage.get("outputTokens"))
     else:
         inputs = count(usage.get("promptTokenCount"))
         cached = count(usage.get("cachedContentTokenCount", 0))
@@ -34,6 +42,10 @@ def usage_cost(provider, usage, rates, self_hosted=False):
             cache_rate = rates.get(f"{provider}_cached_input", input_rate if not cached else None)
             if isinstance(cache_rate, (int, float)) and math.isfinite(cache_rate) and cache_rate >= 0:
                 adjusted = ((inputs - cached) * input_rate + cached * cache_rate + outputs * output_rate) / 1e6
+                if provider == "bedrock" and writes:
+                    write_rate = rates.get("bedrock_cache_write_input")
+                    adjusted = (adjusted + writes * (write_rate - input_rate) / 1e6
+                                if isinstance(write_rate, (int, float)) and math.isfinite(write_rate) and write_rate >= 0 else None)
     return {"input_tokens": inputs, "output_tokens": outputs, "cached_input_tokens": cached,
             "list_cost_usd": full, "cache_adjusted_cost_usd": adjusted}
 
@@ -44,7 +56,7 @@ def measurement(provider, body, telemetry, rates, self_hosted=False):
         attempts.append({**attempt, **usage_cost(provider, attempt["usage"], rates, self_hosted)})
     result = body.get("result", body)
     result = result if isinstance(result, dict) else {}
-    usage = result.get("usage", {}) if provider == "clef" else body.get("usageMetadata", {})
+    usage = result.get("usage", {}) if provider in ("clef", "bedrock") else body.get("usageMetadata", {})
     final = usage_cost(provider, usage, rates, self_hosted)
     for key in ("list_cost_usd", "cache_adjusted_cost_usd"):
         costs = [a[key] for a in attempts]

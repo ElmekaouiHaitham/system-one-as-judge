@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from .common import ROOT, read_jsonl
 from .data import prepare
-from .experiment import bind_run, collect
+from .experiment import bind_run, collect, reuse_clef
 from .providers import Judges, ProviderError
 from .accounting import summarize_resources
 from .report import analyze
@@ -15,16 +15,18 @@ from .routing import route
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Clef / Gemini / BeaverTails experiment")
+    parser = argparse.ArgumentParser(description="Clef / LLM / BeaverTails experiment")
     parser.add_argument("--config", type=Path, default=ROOT / "config.json")
     parser.add_argument("--run", type=Path, default=ROOT / "runs" / "main")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("prepare")
     run = sub.add_parser("collect")
     run.add_argument("--split", choices=["dev", "test", "both"], default="both")
-    run.add_argument("--provider", choices=["clef", "gemini", "both"], default="both")
+    run.add_argument("--provider", choices=["clef", "gemini", "fallback", "both"], default="both")
     run.add_argument("--limit", type=int, help="Smoke test: first N rows of each split")
     sub.add_parser("analyze")
+    reuse = sub.add_parser("reuse-clef", help="Import compatible cached Clef calls with provenance")
+    reuse.add_argument("--source", type=Path, required=True)
     cascade = sub.add_parser("cascade", help="Live selective calls using the frozen policy")
     cascade.add_argument("--input", type=Path, required=True, help="JSONL with prompt and response")
     cascade.add_argument("--output", type=Path, required=True)
@@ -42,11 +44,14 @@ def main():
             parser.error("--limit must be positive")
         ok = collect(run, samples, config, policy,
                      ["dev", "test"] if args.split == "both" else [args.split],
-                     ["clef", "gemini"] if args.provider == "both" else [args.provider], args.limit)
+                     ["clef", "gemini"] if args.provider == "both" else ["gemini" if args.provider == "fallback" else args.provider], args.limit)
         if not ok:
             raise SystemExit(1)
     elif args.command == "analyze":
         analyze(run, samples, config)
+    elif args.command == "reuse-clef":
+        reuse_clef(run, args.source, config, policy)
+        print("Reused compatible Clef outcomes; no model calls made.")
     else:
         frozen = json.loads((run / "routing_policy.json").read_text(encoding="utf-8"))["policies"][args.policy]
         if args.output.exists():

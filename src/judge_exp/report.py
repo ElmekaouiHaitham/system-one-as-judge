@@ -57,6 +57,9 @@ def score_metrics(y, results):
 
 
 def analyze(run, samples, config):
+    fallback_name = config.get("fallback_display_name", "Gemini")
+    display_names = {"clef": "Clef", "gemini": fallback_name,
+                     "fixed": "Fixed cascade", "class_dependent": "Class-dependent cascade"}
     dev = arrays(run, "dev", samples["dev"])
     dc, dg = labels(dev["clef"]), labels(dev["gemini"])
     if (dc < 0).any() or (dg < 0).any():
@@ -90,7 +93,7 @@ def analyze(run, samples, config):
         resources = summarize_resources(results["clef"], results["gemini"], mask, name == "gemini")
         accuracy_samples = (y == pred)[bootstrap].mean(axis=1)
         difference = ((y == pred).astype(int) - (y == gemini).astype(int))[bootstrap].mean(axis=1)
-        rows.append({"system": name, **metrics(y, pred),
+        rows.append({"system": name, "display_name": display_names[name], **metrics(y, pred),
                      **(clef_scores if name == "clef" else {
                          "classification_auroc": None, "error_detection_auroc": None,
                          "auroc_scored_n": 0, "auroc_excluded_n": len(y)}),
@@ -106,12 +109,17 @@ def analyze(run, samples, config):
     # Unlike per-system test comparisons, this ledger includes development,
     # both judges, failures and repeated calls from resumed collection.
     ledger = []
+    reused_clef = (run / "reused_clef_provenance.json").exists()
     for split in ("dev", "test"):
         for provider in ("clef", "gemini"):
             records = read_jsonl(run / f"{split}_{provider}.jsonl")
+            reused_count = len(records) if provider == "clef" and reused_clef else 0
+            if reused_count:
+                records = []  # Cached stages incur no new physical collection calls.
             known = sum(r.get("known_list_cost_usd", r.get("list_cost_usd")) or 0 for r in records)
             unknown = sum(r.get("list_cost_usd") is None for r in records)
-            ledger.append({"split": split, "provider": provider, "collection_calls": len(records),
+            ledger.append({"split": split, "provider": provider, "display_name": display_names[provider],
+                           "reused_source_records": reused_count, "collection_calls": len(records),
                            "http_attempts": sum(len(r.get("attempts", [])) or 1 for r in records),
                            "failed_collection_calls": sum(r["status"] != "ok" for r in records),
                            "terminal_failed_outcomes": sum(r["status"] != "ok" and terminal_failure(r) for r in records),
@@ -129,6 +137,19 @@ def analyze(run, samples, config):
     details["clef_confidence"] = confidence
     details["clef_probability"] = values("clef", "probability")
     details.to_csv(out / "predictions.csv", index=False)
+    # Provider latency is a separately labelled diagnostic. Never replace
+    # end-to-end timing or combine it with client timing for a cascade.
+    timing_rows = []
+    for provider in ("clef", "gemini"):
+        for row, record in zip(samples["test"], results[provider]):
+            timing_rows.append({"id": row["id"], "judge": display_names[provider],
+                "status": record["status"], "outcome_latency_s": record.get("latency_s"),
+                "request_latency_s": record.get("request_latency_s"),
+                "retry_count": record.get("retry_count"),
+                "provider_latency_final_call_s": record.get("provider_latency_s"),
+                "provider_attempt_latency_sum_s": record.get("provider_attempt_latency_sum_s"),
+                "timing_source": "reused earlier calls" if provider == "clef" and reused_clef else "this run"})
+    pd.DataFrame(timing_rows).to_csv(out / "latency_diagnostics.csv", index=False)
     slices = []
     for group in details.control_type.unique():
         selected = (details.control_type == group).to_numpy()
@@ -169,14 +190,14 @@ def analyze(run, samples, config):
         for (i, j), v in np.ndenumerate(matrix):
             ax.text(j, i, str(v), ha="center", va="center")
         ax.set(xticks=[0, 1, 2], xticklabels=["Negative", "Positive", "Failure"],
-               yticks=[0, 1], yticklabels=["Negative", "Positive"], title=name,
+               yticks=[0, 1], yticklabels=["Negative", "Positive"], title=display_names[name],
                xlabel="Predicted", ylabel="Human label")
     fig.savefig(out / "confusion_matrices.png"); plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     complete_costs = pd.to_numeric(summary.list_cost_usd)
     cost_values = complete_costs.fillna(summary.known_list_cost_subtotal_usd)
-    bars = axes[0].bar(summary.system, cost_values, color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
+    bars = axes[0].bar(summary.display_name, cost_values, color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
     for bar, unknown in zip(bars, complete_costs.isna()):
         if unknown:
             bar.set_hatch("//")
@@ -187,7 +208,7 @@ def analyze(run, samples, config):
     positions = np.arange(len(summary))
     axes[1].bar(positions - .18, pd.to_numeric(summary.median_latency_s), width=.36, label="Median")
     axes[1].bar(positions + .18, pd.to_numeric(summary.p95_latency_s), width=.36, label="p95")
-    axes[1].set(xticks=positions, xticklabels=summary.system, title="Outcome latency, including retries", ylabel="Seconds (log scale)")
+    axes[1].set(xticks=positions, xticklabels=summary.display_name, title="Outcome latency, including retries", ylabel="Seconds (log scale)")
     axes[1].set_yscale("log")
     axes[1].legend()
     for ax in axes:
@@ -206,7 +227,7 @@ def analyze(run, samples, config):
     curve_df = pd.DataFrame(curve)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     axes[0].plot(curve_df.clef_coverage, curve_df.cascade_accuracy, "o-", label="Fixed-threshold sweep")
-    axes[0].axhline((gemini == y).mean(), color="#f2a541", linestyle="--", label="Gemini alone")
+    axes[0].axhline((gemini == y).mean(), color="#f2a541", linestyle="--", label=f"{fallback_name} alone")
     for name in policies:
         axes[0].scatter(1 - masks[name].mean(), (predictions[name] == y).mean(), s=100, marker="*", label=f"{name}: frozen on dev")
     axes[0].set(xlabel="Fraction handled by Clef", ylabel="Cascade accuracy")

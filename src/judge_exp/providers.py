@@ -2,6 +2,8 @@ import json
 import math
 import os
 import time
+import re
+from urllib.parse import quote
 
 import requests
 
@@ -52,6 +54,26 @@ def parse_gemini(body):
     return int(verdict["label"] == "positive"), body.get("usageMetadata", {})
 
 
+def parse_bedrock(body):
+    if body.get("stopReason") != "end_turn":
+        raise ValueError("Bedrock blocked, truncated, or returned no completed verdict")
+    content = body.get("output", {}).get("message", {}).get("content", [])
+    # Reasoning content blocks are retained in raw, never parsed as a verdict.
+    text = "".join(part.get("text", "") for part in content)
+    verdict = json.loads(text)
+    if not isinstance(verdict, dict) or verdict.get("label") not in ("positive", "negative"):
+        raise ValueError("Invalid Bedrock label")
+    return int(verdict["label"] == "positive"), body.get("usage", {})
+
+
+def reported_latency(body):
+    metrics = body.get("metrics")
+    value = metrics.get("latencyMs") if isinstance(metrics, dict) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+        return value / 1000
+    return None
+
+
 class Judges:
     def __init__(self, config, policy):
         self.config, self.policy = config, policy
@@ -64,12 +86,17 @@ class Judges:
         rates = self.config["prices_usd_per_million"]
 
         def snapshot(body):
-            return measurement(provider, body, {
+            result = measurement(provider, body, {
                 "latency_s": time.perf_counter() - started,
                 "request_latency_s": sum(a["duration_s"] for a in attempts),
                 "retry_wait_s": retry_wait, "retry_count": max(0, len(attempts) - 1),
                 "attempts": attempts,
             }, rates, self_hosted)
+            if provider == "bedrock":
+                reported = [a.get("provider_latency_s") for a in attempts]
+                result.update(provider_latency_s=reported_latency(body),
+                    provider_attempt_latency_sum_s=sum(reported) if reported and all(v is not None for v in reported) else None)
+            return result
 
         for attempt in range(self.config["max_attempts"]):
             attempt_started = time.perf_counter()
@@ -89,8 +116,11 @@ class Judges:
             except ValueError:
                 body = {}
             result = body.get("result", body)
-            usage = (result.get("usage", {}) if isinstance(result, dict) else {}) if provider == "clef" else body.get("usageMetadata", {})
-            attempts.append({"http_status": response.status_code, "duration_s": duration, "usage": usage})
+            usage = (result.get("usage", {}) if isinstance(result, dict) else {}) if provider in ("clef", "bedrock") else body.get("usageMetadata", {})
+            attempt_info = {"http_status": response.status_code, "duration_s": duration, "usage": usage}
+            if provider == "bedrock":
+                attempt_info["provider_latency_s"] = reported_latency(body)
+            attempts.append(attempt_info)
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt + 1 < self.config["max_attempts"]:
                     retry = response.headers.get("Retry-After", "")
@@ -108,6 +138,8 @@ class Judges:
     def judge(self, provider, row):
         state = json.dumps({"prompt": row["prompt"], "response": row["response"]}, ensure_ascii=False)
         c = self.config
+        if provider in ("gemini", "fallback") and c.get("fallback_backend") == "bedrock":
+            return self.bedrock(state)
         if provider == "clef":
             endpoint = os.getenv("CLEF_ENDPOINT")
             if endpoint:
@@ -156,3 +188,36 @@ class Judges:
                 raise ProviderError(f"Invalid Gemini verdict: {exc}", record, terminal=True) from None
             extra = {}
         return {"label": label, **extra, **record}
+
+    def bedrock(self, state):
+        c = self.config
+        region = c["bedrock_region"]
+        if not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d", region):
+            raise ValueError("Invalid Bedrock region")
+        key = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
+        if not key:
+            raise ValueError("Set AWS_BEARER_TOKEN_BEDROCK in .env before collecting")
+        wait = 60 / c["fallback_requests_per_minute"] - (time.monotonic() - self.last_gemini)
+        if wait > 0:
+            time.sleep(wait)
+        self.last_gemini = time.monotonic()
+        schema = {"type": "object", "properties": {"label": {
+            "type": "string", "enum": ["positive", "negative"]}},
+            "required": ["label"], "additionalProperties": False}
+        body, record = self.post(
+            f"https://bedrock-runtime.{region}.amazonaws.com/model/{quote(c['bedrock_model'], safe='')}/converse",
+            {"Authorization": f"Bearer {key}"}, {
+                "system": [{"text": self.policy}],
+                "messages": [{"role": "user", "content": [{"text": state}]}],
+                "inferenceConfig": {"maxTokens": c["fallback_max_output_tokens"]},
+                "outputConfig": {"textFormat": {"type": "json_schema", "structure": {
+                    "jsonSchema": {"name": "category_verdict", "schema": json.dumps(schema)}}}},
+                "serviceTier": {"type": "default"},
+            }, "bedrock")
+        record.update(backend="bedrock", model=c["bedrock_model"], region=region,
+                      reasoning_setting="provider_default; no effort override on Converse")
+        try:
+            label, _ = parse_bedrock(body)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ProviderError(f"Invalid Bedrock verdict: {exc}", record, terminal=True) from None
+        return {"label": label, **record}

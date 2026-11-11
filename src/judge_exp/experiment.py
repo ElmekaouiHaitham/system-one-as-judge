@@ -46,6 +46,9 @@ def load_predictions(run, split, provider):
             record["retry_count"] = previous.get("retry_count", 0) + record.get("retry_count", 0) + 1
             record["collector_restarts"] = previous.get("collector_restarts", 0) + 1
             record["latency_basis"] = "sum_of_call_durations; collector_restart_gaps_excluded"
+            if "provider_attempt_latency_sum_s" in record or "provider_attempt_latency_sum_s" in previous:
+                parts = [previous.get("provider_attempt_latency_sum_s"), current.get("provider_attempt_latency_sum_s")]
+                record["provider_attempt_latency_sum_s"] = sum(parts) if all(v is not None for v in parts) else None
         latest[record["id"]] = record
     return latest
 
@@ -54,6 +57,40 @@ def terminal_failure(record):
     # Recognize previously saved Gemini content blocks without rewriting the log.
     return bool(record.get("terminal_error") or
                 record.get("raw", {}).get("promptFeedback", {}).get("blockReason"))
+
+
+def reuse_clef(run, source, config, policy):
+    """Reuse immutable Clef calls only after verifying compatible inputs/settings."""
+    run, source = Path(run), Path(source)
+    target = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    original = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    if original["policy"] != policy or original["sample_hashes"] != target["sample_hashes"]:
+        raise ValueError("Clef source has a different policy or dataset sample")
+    if original["measurement_version"] != target["measurement_version"]:
+        raise ValueError("Clef source has a different measurement version")
+    for key in ("clef_model", "clef_request_model", "timeout_seconds", "max_attempts"):
+        if original["config"][key] != config[key]:
+            raise ValueError(f"Clef source has different {key}")
+    if original["config"]["prices_usd_per_million"]["clef_input"] != config["prices_usd_per_million"]["clef_input"]:
+        raise ValueError("Clef source has different pricing")
+    imports = {}
+    for split in ("dev", "test"):
+        rows = read_jsonl(ROOT / "data" / "prepared" / f"{split}.jsonl")
+        predictions = load_predictions(source, split, "clef")
+        if set(predictions) != {r["id"] for r in rows} or any(r["status"] != "ok" for r in predictions.values()):
+            raise ValueError(f"Clef source must have successful outcomes for every {split} row")
+        content = (source / f"{split}_clef.jsonl").read_bytes()
+        destination = run / f"{split}_clef.jsonl"
+        if destination.exists() and destination.read_bytes() != content:
+            raise ValueError("Target already contains different Clef records")
+        imports[split] = content
+    for split, content in imports.items():
+        (run / f"{split}_clef.jsonl").write_bytes(content)
+    write_json(run / "reused_clef_provenance.json", {
+        "source_run": str(source.resolve()), "source_signature": original["signature"],
+        "source_record_hashes": {s: digest(read_jsonl(source / f"{s}_clef.jsonl")) for s in imports},
+        "note": "No new Clef calls. Quality and per-outcome resource estimates reuse earlier calls; timings are not contemporaneous.",
+    })
 
 
 def collect(run, samples, config, policy, splits, providers, limit=None):

@@ -1,11 +1,16 @@
-# System One as Judge: Clef → Gemini
+# System One as Judge: Clef → LLM
 
 [![Python checks](https://github.com/ElmekaouiHaitham/system-one-as-judge/actions/workflows/checks.yml/badge.svg)](https://github.com/ElmekaouiHaitham/system-one-as-judge/actions/workflows/checks.yml)
 
-Compare Cloudflare Clef (27B), Gemini 3.1 Flash-Lite, and confidence cascades on
+Compare Cloudflare Clef (27B), an LLM judge, and confidence cascades on
 BeaverTails' `discrimination,stereotype,injustice` category. Existing human labels
 are the reference. No new annotation is required. This is an illustrative
 reproducible experiment, with conclusions limited to its sample and label policy.
+
+The original baseline uses Gemini 3.1 Flash-Lite. Separate Amazon Bedrock configs
+support **GLM-5** and **Kimi K3** with the same judging policy and samples. These
+adapters have offline contract tests; live access and model behavior require a
+successful pilot with your own account.
 
 **Question:** How much evaluation cost can confidence routing save, and which
 errors remain when uncertain Clef verdicts are escalated to Gemini?
@@ -422,6 +427,99 @@ For a separate experiment, place global options before the command:
 python -m judge_exp.cli --config config.json --run runs/experiment_02 collect
 python -m judge_exp.cli --config config.json --run runs/experiment_02 analyze
 ```
+
+## Amazon Bedrock: GLM-5 and Kimi K3
+
+Use **US East (N. Virginia), `us-east-1`**, for both example configs. In the
+[Bedrock console](https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1),
+open **API keys → Long-term API keys → Generate**, and choose a short expiration
+such as seven days. These exploratory keys avoid creating general-purpose AWS
+access keys. Make sure the key's identity can invoke the models; a valid key does
+not by itself guarantee account/model access or Free plan eligibility.
+
+Save the key privately in the existing `.env`:
+
+```dotenv
+AWS_BEARER_TOKEN_BEDROCK=your_bedrock_key
+```
+
+The configs pin Standard on-demand inference and these November 11, 2026 list prices:
+
+| Config | Model/profile | USD per million input / output tokens |
+|---|---|---|
+| `configs/bedrock-glm-5.json` | `zai.glm-5`, US East | $1.00 / $3.20 |
+| `configs/bedrock-kimi-k3.json` | `global.moonshotai.kimi-k3` | $3.00 / $15.00 |
+
+Different regions and inference profiles can have different prices. Credits are
+not deducted from estimated list costs, and trial-credit coverage isn't assumed.
+
+Keep one run directory per fallback model. If you already completed Clef in
+`runs/main`, import it with compatibility checks and a provenance record:
+
+```sh
+python -m judge_exp.cli --config configs/bedrock-glm-5.json --run runs/bedrock-glm-5 reuse-clef --source runs/main
+python -m judge_exp.cli --config configs/bedrock-kimi-k3.json --run runs/bedrock-kimi-k3 reuse-clef --source runs/main
+```
+
+Otherwise, collect Clef once using `--provider clef` in one of these runs, then
+reuse that run as the source for the other. Importing makes **no API calls**.
+
+Start with development pilots:
+
+```sh
+python -m judge_exp.cli --config configs/bedrock-glm-5.json --run runs/bedrock-glm-5 collect --provider fallback --split dev --limit 20
+python -m judge_exp.cli --config configs/bedrock-kimi-k3.json --run runs/bedrock-kimi-k3 collect --provider fallback --split dev --limit 20
+```
+
+After checking reliability, finish development with the same command without
+`--limit`. Fix the model/settings using development data, then collect test with
+`--split test` and run `analyze` using the matching `--config` and `--run`.
+To preserve compatibility with historical runs, the fallback cache files and
+some machine-readable keys still use the internal name `gemini`; Bedrock records
+also identify `backend`, `model`, and `region`, and report display labels name the
+actual model. Neither a Gemini key nor new Gemini calls are used in these runs.
+
+Both adapters use Bedrock's **Converse** endpoint with schema-constrained JSON,
+the original policy as the system instruction, and only prompt/response as user
+data. Human labels and Clef predictions are never included. Reasoning stays at
+the provider default; **Kimi K3 defaults to max**. No unsupported effort override
+is sent on Converse. The 8,192-token output cap includes reasoning; truncations
+remain failed outcomes. A failed output isn't retried for a different verdict.
+An unsupported-schema/configuration response stops collection for inspection;
+it never silently changes the judging protocol.
+
+### Two distinct latency measurements
+
+- `latency_s`: measured client outcome time, including network, provider time,
+  retries and backoff, excluding deliberate pre-request quota pacing. This is
+  the common basis used for Clef, each fallback, and simulated cascades.
+- `provider_latency_s`: Bedrock's returned `metrics.latencyMs / 1000` for the
+  final HTTP response, when available. This is an additional provider diagnostic,
+  not a measure of pure model computation and not the total after retries.
+- `provider_attempt_latency_sum_s`: sum of reported service times only if every
+  attempt reports a value; otherwise unknown. Restart aggregation preserves this
+  rule. Individual attempt times remain in the raw cache.
+
+Reports include `latency_diagnostics.csv` with both measurements. Do not compare
+Bedrock-reported time directly with Clef client time or add those two bases in
+one cascade. Cached Clef timings are from an earlier collection period: reuse is
+appropriate for quality and estimated routing resources, but controlled speed
+claims need fresh timings collected under comparable conditions. New JSON
+schemas can require a first-call compilation; retain that call and identify it
+when reporting cold versus warm performance.
+
+Bedrock's `outputTokens` already includes reasoning, so it is charged once.
+Cached reads/writes are included once in total input tokens. The uncached list
+estimate and cache-adjusted estimate remain separate; missing usage or unknown
+cache-write pricing stays unknown. Reused Clef calls count in simulated system
+resources but add no new calls/cost to the run's physical collection ledger.
+
+Sources: [API keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html),
+[Converse latency](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseMetrics.html),
+[structured outputs](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html),
+[GLM-5](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-zai-glm-5.html),
+[Kimi K3 and reasoning defaults](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-moonshot-ai-kimi-k3.html),
+[prices by region](https://aws.amazon.com/bedrock/pricing/).
 
 ## Sources and attribution
 

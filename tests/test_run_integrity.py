@@ -105,3 +105,17 @@ def test_resumed_transport_attempts_keep_their_time_cost_and_unknown_usage(tmp_p
     assert result["retry_count"] == result["collector_restarts"] == 1
     assert len(result["attempts"]) == 2
     assert len((tmp_path / "test_gemini.jsonl").read_text().splitlines()) == 2
+
+
+def test_persisted_cooldown_for_same_outcome_counts_as_retry_time(tmp_path):
+    write_jsonl(tmp_path / "test_gemini.jsonl", [
+        {"id": "a", "status": "error", "latency_s": 20, "request_latency_s": 2,
+         "retry_wait_s": 18, "retry_count": 3},
+        {"id": "a", "status": "ok", "latency_s": 4, "request_latency_s": 4,
+         "retry_wait_s": 0, "retry_count": 0, "pre_request_pacing_s": 60},
+    ])
+    r = load_predictions(tmp_path, "test", "gemini")["a"]
+    assert r["latency_s"] == 84
+    assert r["request_latency_s"] == 6
+    assert r["retry_wait_s"] == 78
+    assert r["resumed_retry_pacing_s"] == 60

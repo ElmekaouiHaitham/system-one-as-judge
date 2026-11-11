@@ -39,6 +39,13 @@ def load_predictions(run, split, provider):
             for key in ("latency_s", "request_latency_s", "retry_wait_s", "list_cost_usd", "cache_adjusted_cost_usd"):
                 parts = [previous.get(key), record.get(key)]
                 record[key] = sum(parts) if all(p is not None for p in parts) else None
+            # A persisted cooldown before retrying the same unresolved outcome
+            # is retry time, rather than pacing between independent examples.
+            resumed_wait = current.get("pre_request_pacing_s", 0)
+            for key in ("latency_s", "retry_wait_s"):
+                if record.get(key) is not None:
+                    record[key] += resumed_wait
+            record["resumed_retry_pacing_s"] = previous.get("resumed_retry_pacing_s", 0) + resumed_wait
             for key in ("list_cost_usd", "cache_adjusted_cost_usd"):
                 record[f"known_{key}"] = (
                     previous.get(f"known_{key}", previous.get(key)) or 0) + (
@@ -46,7 +53,7 @@ def load_predictions(run, split, provider):
             record["attempts"] = previous.get("attempts", []) + record.get("attempts", [])
             record["retry_count"] = previous.get("retry_count", 0) + record.get("retry_count", 0) + 1
             record["collector_restarts"] = previous.get("collector_restarts", 0) + 1
-            record["latency_basis"] = "sum_of_call_durations; collector_restart_gaps_excluded"
+            record["latency_basis"] = "sum_of_call_durations_and_persisted_retry_cooldowns; manual_restart_gaps_excluded"
             if "provider_attempt_latency_sum_s" in record or "provider_attempt_latency_sum_s" in previous:
                 parts = [previous.get("provider_attempt_latency_sum_s"), current.get("provider_attempt_latency_sum_s")]
                 record["provider_attempt_latency_sum_s"] = sum(parts) if all(v is not None for v in parts) else None

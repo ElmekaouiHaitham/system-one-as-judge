@@ -510,6 +510,9 @@ data, collects the held-out test rows, then generates the report. Simulated
 cascades reuse these independent cached calls. Planned queue pacing occurs
 outside the outcome timer; cooldowns required by retries stay in retry latency.
 `pre_request_pacing_s` records planned waiting on completed Bedrock calls.
+If an automatic collector restart retries the same unresolved example, its
+persisted cooldown is included in that outcome's aggregated retry time. Manual
+gaps between sessions remain excluded. Immutable per-call records are retained.
 The CLI also accepts `collect --requests-per-minute 2` for a single split.
 
 After checking reliability, finish development with the same command without

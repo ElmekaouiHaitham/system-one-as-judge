@@ -112,6 +112,7 @@ class Judges:
                     provider_attempt_latency_sum_s=sum(reported) if reported and all(v is not None for v in reported) else None)
                 if self.bedrock_limiter:
                     result["rate_limit"] = self.bedrock_limiter.metadata()
+                    result["pre_request_pacing_s"] = getattr(self, "bedrock_queue_wait_s", 0)
             return result
 
         for attempt in range(self.config["max_attempts"]):
@@ -236,6 +237,7 @@ class Judges:
                 time.sleep(wait)
             self.last_gemini = time.monotonic()
             queue_wait = max(0, wait)
+        self.bedrock_queue_wait_s = queue_wait
         schema = {"type": "object", "properties": {"label": {
             "type": "string", "enum": ["positive", "negative"]}},
             "required": ["label"], "additionalProperties": False}

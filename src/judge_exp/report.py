@@ -56,10 +56,7 @@ def score_metrics(y, results):
             "auroc_scored_n": int(valid.sum()), "auroc_excluded_n": int((~valid).sum())}, (target, p, errors, uncertainty)
 
 
-def analyze(run, samples, config):
-    fallback_name = config.get("fallback_display_name", "Gemini")
-    display_names = {"clef": "Clef", "gemini": fallback_name,
-                     "fixed": "Fixed cascade", "class_dependent": "Class-dependent cascade"}
+def freeze_policies(run, samples, config):
     dev = arrays(run, "dev", samples["dev"])
     dc, dg = labels(dev["clef"]), labels(dev["gemini"])
     if (dc < 0).any() or (dg < 0).any():
@@ -69,7 +66,19 @@ def analyze(run, samples, config):
     policies = {name: select_thresholds(dy, dc, dg, conf_dev, config["threshold_grid"],
                 config["max_dev_accuracy_drop"], adaptive)
                 for name, adaptive in [("fixed", False), ("class_dependent", True)]}
-    write_json(run / "routing_policy.json", {"selection_split": "dev", "policies": policies})
+    frozen = {"selection_split": "dev", "policies": policies}
+    path = run / "routing_policy.json"
+    if path.exists() and json.loads(path.read_text(encoding="utf-8")) != frozen:
+        raise ValueError("Frozen policy differs from development-selected policy; choose a new run")
+    write_json(path, frozen)
+    return frozen
+
+
+def analyze(run, samples, config):
+    fallback_name = config.get("fallback_display_name", "Gemini")
+    display_names = {"clef": "Clef", "gemini": fallback_name,
+                     "fixed": "Fixed cascade", "class_dependent": "Class-dependent cascade"}
+    policies = freeze_policies(run, samples, config)["policies"]
     results = arrays(run, "test", samples["test"])
     y = np.array([r["label"] for r in samples["test"]])
     clef, gemini = labels(results["clef"]), labels(results["gemini"])

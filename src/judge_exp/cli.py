@@ -1,6 +1,7 @@
 import argparse
 import json
 import time
+import math
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,6 +25,11 @@ def main():
     run.add_argument("--split", choices=["dev", "test", "both"], default="both")
     run.add_argument("--provider", choices=["clef", "gemini", "fallback", "both"], default="both")
     run.add_argument("--limit", type=int, help="Smoke test: first N rows of each split")
+    run.add_argument("--requests-per-minute", type=float,
+                     help="Bedrock transport ceiling; can lower but never raise the config limit")
+    full = sub.add_parser("full", help="Resume collection, freeze thresholds on dev, collect test and analyze")
+    full.add_argument("--requests-per-minute", type=float, default=2)
+    full.add_argument("--max-restarts", type=int, default=6, help="Bounded resumes for transient failures per split")
     sub.add_parser("analyze")
     reuse = sub.add_parser("reuse-clef", help="Import compatible cached Clef calls with provenance")
     reuse.add_argument("--source", type=Path, required=True)
@@ -39,12 +45,20 @@ def main():
         prepare(config)
         return
     run, samples = bind_run(args.run, config, policy)
-    if args.command == "collect":
+    if args.command == "full":
+        if not math.isfinite(args.requests_per_minute) or args.requests_per_minute <= 0 or args.max_restarts < 0:
+            parser.error("Use a finite positive request rate and nonnegative max-restarts")
+        from .workflow import full_experiment
+        full_experiment(run, samples, config, policy, args.requests_per_minute, args.max_restarts)
+    elif args.command == "collect":
         if args.limit is not None and args.limit < 1:
             parser.error("--limit must be positive")
+        if args.requests_per_minute is not None and (not math.isfinite(args.requests_per_minute) or args.requests_per_minute <= 0):
+            parser.error("--requests-per-minute must be finite and positive")
         ok = collect(run, samples, config, policy,
                      ["dev", "test"] if args.split == "both" else [args.split],
-                     ["clef", "gemini"] if args.provider == "both" else ["gemini" if args.provider == "fallback" else args.provider], args.limit)
+                     ["clef", "gemini"] if args.provider == "both" else ["gemini" if args.provider == "fallback" else args.provider], args.limit,
+                     requests_per_minute=args.requests_per_minute)
         if not ok:
             raise SystemExit(1)
     elif args.command == "analyze":

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .common import ROOT, digest, read_jsonl, write_json
 from .providers import Judges, ProviderError
+from .rate_limit import RateLimiter
 
 
 def bind_run(run, config, policy):
@@ -93,8 +94,17 @@ def reuse_clef(run, source, config, policy):
     })
 
 
-def collect(run, samples, config, policy, splits, providers, limit=None):
+def collect(run, samples, config, policy, splits, providers, limit=None, requests_per_minute=None):
     judges = Judges(config, policy)
+    if config.get("fallback_backend") == "bedrock":
+        rpm = min(requests_per_minute or config["fallback_requests_per_minute"], config["fallback_requests_per_minute"])
+        judges.bedrock_limiter = RateLimiter(rpm, Path(run) / "bedrock_rate_limit.json")
+        # Transport changes don't alter the frozen model, rubric or sample.
+        # Preserve the immutable original manifest and record each collection session.
+        with (Path(run) / "transport_sessions.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"started_utc": datetime.now(timezone.utc).isoformat(),
+                "max_requests_per_minute": rpm, "strategy": "persistent_adaptive_v1",
+                "splits": splits, "providers": providers}) + "\n")
     for split in splits:
         for provider in providers:
             existing = load_predictions(run, split, provider)
@@ -119,7 +129,8 @@ def collect(run, samples, config, policy, splits, providers, limit=None):
                 with (Path(run) / f"{split}_{provider}.jsonl").open("a", encoding="utf-8") as f:
                     f.write(json.dumps(result, ensure_ascii=False, allow_nan=False) + "\n")
                     f.flush()
-                print(f"{split} {provider} {i}/{len(rows)}: {result['status']}", flush=True)
+                name = config.get("fallback_display_name", provider) if provider == "gemini" else provider
+                print(f"{split} {name} {i}/{len(rows)}: {result['status']}", flush=True)
                 if result["status"] == "error" and not terminal_failure(result):
                     print(f"Stopped after error: {result['error']}. Fix it and rerun to resume.")
                     return False

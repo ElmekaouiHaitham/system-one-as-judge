@@ -3,6 +3,8 @@ import math
 import os
 import time
 import re
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
 import requests
@@ -74,11 +76,23 @@ def reported_latency(body):
     return None
 
 
+def retry_after_seconds(value):
+    try:
+        delay = float(value)
+    except (ValueError, TypeError):
+        try:
+            delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return 0
+    return max(0, delay) if math.isfinite(delay) else 0
+
+
 class Judges:
     def __init__(self, config, policy):
         self.config, self.policy = config, policy
         self.session = requests.Session()
         self.last_gemini = 0.0
+        self.bedrock_limiter = None
 
     def post(self, url, headers, payload, provider, self_hosted=False):
         started = time.perf_counter()
@@ -96,9 +110,15 @@ class Judges:
                 reported = [a.get("provider_latency_s") for a in attempts]
                 result.update(provider_latency_s=reported_latency(body),
                     provider_attempt_latency_sum_s=sum(reported) if reported and all(v is not None for v in reported) else None)
+                if self.bedrock_limiter:
+                    result["rate_limit"] = self.bedrock_limiter.metadata()
             return result
 
         for attempt in range(self.config["max_attempts"]):
+            if provider == "bedrock" and self.bedrock_limiter and attempt:
+                wait_started = time.perf_counter()
+                self.bedrock_limiter.wait()
+                retry_wait += time.perf_counter() - wait_started
             attempt_started = time.perf_counter()
             try:
                 response = self.session.post(url, headers=headers, json=payload,
@@ -121,12 +141,23 @@ class Judges:
             if provider == "bedrock":
                 attempt_info["provider_latency_s"] = reported_latency(body)
             attempts.append(attempt_info)
+            retry_delay = retry_after_seconds(response.headers.get("Retry-After"))
+            if provider == "bedrock" and self.bedrock_limiter:
+                if response.status_code == 429:
+                    self.bedrock_limiter.throttled(retry_delay)
+                elif response.ok:
+                    self.bedrock_limiter.succeeded()
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt + 1 < self.config["max_attempts"]:
-                    retry = response.headers.get("Retry-After", "")
-                    delay = float(retry) if retry.isdigit() else 2 ** (attempt + 1)
+                    if provider == "bedrock" and self.bedrock_limiter and response.status_code == 429:
+                        continue  # Persistent limiter owns this cooldown, including retries.
+                    delay = max(retry_delay, 2 ** (attempt + 1))
                     wait_started = time.perf_counter()
-                    time.sleep(min(delay, 60))
+                    remaining = delay
+                    while remaining > 0:
+                        chunk = min(remaining, 30)
+                        time.sleep(chunk)
+                        remaining -= chunk
                     retry_wait += time.perf_counter() - wait_started
                     continue
             # Avoid including credential-bearing URLs in exceptions/logs.
@@ -197,10 +228,14 @@ class Judges:
         key = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
         if not key:
             raise ValueError("Set AWS_BEARER_TOKEN_BEDROCK in .env before collecting")
-        wait = 60 / c["fallback_requests_per_minute"] - (time.monotonic() - self.last_gemini)
-        if wait > 0:
-            time.sleep(wait)
-        self.last_gemini = time.monotonic()
+        if self.bedrock_limiter:
+            queue_wait = self.bedrock_limiter.wait()  # Outside the outcome timer.
+        else:
+            wait = 60 / c["fallback_requests_per_minute"] - (time.monotonic() - self.last_gemini)
+            if wait > 0:
+                time.sleep(wait)
+            self.last_gemini = time.monotonic()
+            queue_wait = max(0, wait)
         schema = {"type": "object", "properties": {"label": {
             "type": "string", "enum": ["positive", "negative"]}},
             "required": ["label"], "additionalProperties": False}
@@ -215,6 +250,7 @@ class Judges:
                 "serviceTier": {"type": "default"},
             }, "bedrock")
         record.update(backend="bedrock", model=c["bedrock_model"], region=region,
+                      pre_request_pacing_s=queue_wait,
                       reasoning_setting="provider_default; no effort override on Converse")
         try:
             label, _ = parse_bedrock(body)

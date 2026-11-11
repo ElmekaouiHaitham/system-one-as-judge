@@ -479,6 +479,39 @@ python -m judge_exp.cli --config configs/bedrock-glm-5.json --run runs/bedrock-g
 python -m judge_exp.cli --config configs/bedrock-kimi-k3.json --run runs/bedrock-kimi-k3 collect --provider fallback --split dev --limit 20
 ```
 
+To finish the complete **100-development / 300-test** experiment sequentially,
+including threshold freezing and report generation, use:
+
+```sh
+python -m judge_exp.cli --config configs/bedrock-kimi-k3-stockholm.json --run runs/bedrock-kimi-k3-stockholm full --requests-per-minute 2
+```
+
+This command resumes saved successes; it doesn't submit the dataset as a bulk
+job. There is one in-flight request, initially at most two Bedrock attempts per
+minute. A persistent local scheduler spaces retries as well as new examples.
+HTTP 429 causes a cooldown of at least 60 seconds and an increased interval;
+five successes gradually restore the original interval. `Retry-After` is
+honored, including HTTP-date and fractional-second values. The rate can never
+exceed the config's ceiling. The scheduler state survives process restarts.
+There are bounded automatic resumes for transient transport/service failures;
+access/configuration errors stop immediately. Successful or terminally blocked
+verdicts are never rerun to obtain a different answer.
+
+Collection-session rate settings are recorded in `transport_sessions.jsonl`,
+and new Bedrock outcomes identify the limiter strategy and effective interval.
+The model/rubric/sample manifest stays immutable: changing transport pacing is
+recorded separately from changing judging settings. Earlier outcomes collected
+under the original five-per-minute ceiling remain in the same cache with their
+original timings and retry history. Never describe the full run as having used
+one fixed request rate throughout.
+
+The workflow freezes `routing_policy_before_test.json` using only development
+data, collects the held-out test rows, then generates the report. Simulated
+cascades reuse these independent cached calls. Planned queue pacing occurs
+outside the outcome timer; cooldowns required by retries stay in retry latency.
+`pre_request_pacing_s` records planned waiting on completed Bedrock calls.
+The CLI also accepts `collect --requests-per-minute 2` for a single split.
+
 After checking reliability, finish development with the same command without
 `--limit`. Fix the model/settings using development data, then collect test with
 `--split test` and run `analyze` using the matching `--config` and `--run`.

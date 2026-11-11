@@ -180,3 +180,17 @@ def test_report_names_model_and_separates_reused_collection_cost(tmp_path):
     assert set(times.judge) == {"Clef", "GLM-5"}
     assert times.loc[times.judge == "Clef", "provider_latency_final_call_s"].isna().all()
     assert (times.loc[times.judge == "GLM-5", "provider_latency_final_call_s"] == 1.5).all()
+
+
+def test_retry_free_comparison_uses_same_examples_for_both_judges():
+    from judge_exp.report import paired_first_attempt_latency
+    def record(seconds, retry=0):
+        return {"status": "ok", "latency_s": seconds, "retry_count": retry,
+                "attempts": [{"http_status": 200}], "provider_latency_s": seconds - .1}
+    clef = [record(1), record(2), record(3)]
+    fallback = [record(20, retry=1), record(5), {"status": "error"}]
+    r = paired_first_attempt_latency(clef, fallback, "Kimi K3")
+    assert r["paired_first_attempt_n"] == 1 and r["excluded_pairs"] == 2
+    assert r["systems"][0]["median_client_s"] == 2
+    assert r["systems"][1]["median_client_s"] == 5
+    assert r["systems"][1]["median_provider_reported_s"] == 4.9

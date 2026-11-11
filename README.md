@@ -560,6 +560,13 @@ claims need fresh timings collected under comparable conditions. New JSON
 schemas can require a first-call compilation; retain that call and identify it
 when reporting cold versus warm performance.
 
+`paired_first_attempt_latency.json` / `.csv` and its figure provide an additional
+conditional comparison: keep only the same examples where **both** judges
+returned valid verdicts on their first HTTP attempt, and publish the retained
+and excluded counts. This prevents comparing different retry-free subsets.
+This diagnostic doesn't replace the full operational latency table and doesn't
+measure pure model computation. Optional AWS-reported statistics remain separate.
+
 Bedrock's `outputTokens` already includes reasoning, so it is charged once.
 Cached reads/writes are included once in total input tokens. The uncached list
 estimate and cache-adjusted estimate remain separate; missing usage or unknown

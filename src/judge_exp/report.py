@@ -1,4 +1,5 @@
 import json
+import math
 
 import matplotlib
 matplotlib.use("Agg")
@@ -54,6 +55,32 @@ def score_metrics(y, results):
     error_detection = float(roc_auc_score(errors, uncertainty)) if len(np.unique(errors)) == 2 else None
     return {"classification_auroc": classification, "error_detection_auroc": error_detection,
             "auroc_scored_n": int(valid.sum()), "auroc_excluded_n": int((~valid).sum())}, (target, p, errors, uncertainty)
+
+
+def paired_first_attempt_latency(clef, fallback, fallback_name):
+    """A conditional timing diagnostic on exactly the same successful first attempts."""
+    def numeric(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+
+    def eligible(r):
+        attempts = r.get("attempts", [])
+        return (r["status"] == "ok" and r.get("retry_count") == 0 and len(attempts) == 1
+                and attempts[0].get("http_status") == 200 and numeric(r.get("latency_s")))
+
+    matched = [(c, g) for c, g in zip(clef, fallback) if eligible(c) and eligible(g)]
+    systems = []
+    for index, name in ((0, "Clef"), (1, fallback_name)):
+        values = [pair[index]["latency_s"] for pair in matched]
+        reported = [pair[index]["provider_latency_s"] for pair in matched if numeric(pair[index].get("provider_latency_s"))]
+        systems.append({"system": name, "paired_n": len(matched),
+            "median_client_s": float(np.median(values)) if values else None,
+            "p95_client_s": float(np.quantile(values, .95)) if values else None,
+            "provider_reported_n": len(reported),
+            "median_provider_reported_s": float(np.median(reported)) if reported else None,
+            "p95_provider_reported_s": float(np.quantile(reported, .95)) if reported else None})
+    return {"basis": "Conditional on both judges returning a valid verdict on their first HTTP attempt; same examples for both. Not pure model inference time.",
+            "total_pairs": len(clef), "paired_first_attempt_n": len(matched),
+            "excluded_pairs": len(clef) - len(matched), "systems": systems}
 
 
 def freeze_policies(run, samples, config):
@@ -159,6 +186,10 @@ def analyze(run, samples, config):
                 "provider_attempt_latency_sum_s": record.get("provider_attempt_latency_sum_s"),
                 "timing_source": "reused earlier calls" if provider == "clef" and reused_clef else "this run"})
     pd.DataFrame(timing_rows).to_csv(out / "latency_diagnostics.csv", index=False)
+    first_attempt = paired_first_attempt_latency(results["clef"], results["gemini"], fallback_name)
+    first_attempt["clef_timings_reused"] = reused_clef
+    write_json(out / "paired_first_attempt_latency.json", first_attempt)
+    pd.DataFrame(first_attempt["systems"]).to_csv(out / "paired_first_attempt_latency.csv", index=False)
     slices = []
     for group in details.control_type.unique():
         selected = (details.control_type == group).to_numpy()
@@ -224,6 +255,23 @@ def analyze(run, samples, config):
         ax.tick_params(axis="x", rotation=20)
     fig.suptitle("Cascade totals are simulated from cached calls; no free-tier discount")
     fig.savefig(out / "cost_latency.png"); plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+    first_rows = first_attempt["systems"]
+    if first_attempt["paired_first_attempt_n"]:
+        positions = np.arange(2)
+        ax.bar(positions - .18, [r["median_client_s"] for r in first_rows], width=.36, label="Median")
+        ax.bar(positions + .18, [r["p95_client_s"] for r in first_rows], width=.36, label="p95")
+        ax.set(xticks=positions, xticklabels=[r["system"] for r in first_rows], ylabel="Client seconds (log scale)")
+        ax.set_yscale("log")
+        ax.legend()
+    else:
+        ax.text(.5, .5, "No matched valid first-attempt timings available", ha="center")
+        ax.set_axis_off()
+    fig.suptitle(f"Conditional timing diagnostic: {first_attempt['paired_first_attempt_n']}/{len(y)} matched pairs")
+    ax.set_title("Both judges succeeded without retries; prior Clef timings reused" if reused_clef
+                 else "Both judges succeeded without retries", fontsize=9)
+    fig.savefig(out / "paired_first_attempt_latency.png"); plt.close(fig)
 
     curve = []
     for t in config["threshold_grid"]:

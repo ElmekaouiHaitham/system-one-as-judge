@@ -5,7 +5,7 @@ from judge_exp.common import CATEGORY
 from judge_exp.data import prompt_key, sample
 from judge_exp.providers import parse_clef, parse_gemini, probability
 from judge_exp.routing import route, select_thresholds
-from judge_exp.report import metrics
+from judge_exp.report import metrics, score_metrics
 
 
 def test_probability_validation():
@@ -64,3 +64,19 @@ def test_failures_are_not_silently_dropped():
     assert m["accuracy"] == .5
     assert m["failure_rate"] == .5
     assert m["recall"] == .5
+
+
+def test_auroc_ranking_ties_and_failures():
+    def result(p):
+        return {"status": "ok", "probability": p}
+    m, _ = score_metrics([0, 1, 0, 1], [result(.1), result(.9), result(.2), result(.8)])
+    assert m["classification_auroc"] == 1
+    assert m["error_detection_auroc"] is None  # no errors to rank
+    m, _ = score_metrics([0, 1], [result(.5), result(.5)])
+    assert m["classification_auroc"] == .5
+    m, _ = score_metrics([0, 0, 1, 1], [result(.1), result(.6), result(.4), result(.9)])
+    assert m["error_detection_auroc"] == 1  # errors have higher uncertainty
+    m, _ = score_metrics([0, 1, 1], [result(.1), {"status": "error"}, result(float("nan"))])
+    assert m["classification_auroc"] is None  # only one valid target class
+    assert m["auroc_scored_n"] == 1
+    assert m["auroc_excluded_n"] == 2

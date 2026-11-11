@@ -5,6 +5,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import roc_auc_score, roc_curve
 
 from .common import write_json
 from .experiment import load_predictions
@@ -39,6 +40,21 @@ def metrics(y, pred):
             "failure_rate": float((pred < 0).mean())}
 
 
+def score_metrics(y, results):
+    """AUROC on valid Clef scores only; publish the denominator explicitly."""
+    y = np.asarray(y)
+    probabilities = np.array([r.get("probability", np.nan) if r["status"] == "ok" else np.nan
+                              for r in results], dtype=float)
+    valid = np.isfinite(probabilities) & (probabilities >= 0) & (probabilities <= 1)
+    target, p = y[valid], probabilities[valid]
+    errors = (target != (p >= .5)).astype(int)
+    uncertainty = 1 - np.maximum(p, 1 - p)
+    classification = float(roc_auc_score(target, p)) if len(np.unique(target)) == 2 else None
+    error_detection = float(roc_auc_score(errors, uncertainty)) if len(np.unique(errors)) == 2 else None
+    return {"classification_auroc": classification, "error_detection_auroc": error_detection,
+            "auroc_scored_n": int(valid.sum()), "auroc_excluded_n": int((~valid).sum())}, (target, p, errors, uncertainty)
+
+
 def analyze(run, samples, config):
     dev = arrays(run, "dev", samples["dev"])
     dc, dg = labels(dev["clef"]), labels(dev["gemini"])
@@ -65,6 +81,7 @@ def analyze(run, samples, config):
     def values(provider, key):
         return np.array([r.get(key) if r.get(key) is not None else np.nan for r in results[provider]], dtype=float)
     rows = []
+    clef_scores, roc_inputs = score_metrics(y, results["clef"])
     rng = np.random.default_rng(config["seed"])
     bootstrap = rng.integers(0, len(y), (2000, len(y)))
     for name, pred in predictions.items():
@@ -77,6 +94,9 @@ def analyze(run, samples, config):
         accuracy_samples = (y == pred)[bootstrap].mean(axis=1)
         difference = ((y == pred).astype(int) - (y == gemini).astype(int))[bootstrap].mean(axis=1)
         rows.append({"system": name, **metrics(y, pred),
+                     **(clef_scores if name == "clef" else {
+                         "classification_auroc": None, "error_detection_auroc": None,
+                         "auroc_scored_n": 0, "auroc_excluded_n": len(y)}),
                      "accuracy_ci_low": float(np.quantile(accuracy_samples, .025)),
                      "accuracy_ci_high": float(np.quantile(accuracy_samples, .975)),
                      "accuracy_difference_vs_gemini_ci_low": float(np.quantile(difference, .025)),
@@ -91,6 +111,7 @@ def analyze(run, samples, config):
     for name, pred in predictions.items():
         details[name] = pred
     details["clef_confidence"] = confidence
+    details["clef_probability"] = values("clef", "probability")
     details.to_csv(out / "predictions.csv", index=False)
     slices = []
     for group in details.control_type.unique():
@@ -108,6 +129,23 @@ def analyze(run, samples, config):
     write_json(out / "cascade_diagnostics.json", diagnostics)
 
     plt.rcParams.update({"figure.dpi": 140, "axes.spines.top": False, "axes.spines.right": False})
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    target, p, errors, uncertainty = roc_inputs
+    for ax, truth, scores, title, key in [
+        (axes[0], target, p, "Clef category classification", "classification_auroc"),
+        (axes[1], errors, uncertainty, "Clef error detection using uncertainty", "error_detection_auroc"),
+    ]:
+        auc = clef_scores[key]
+        ax.plot([0, 1], [0, 1], "--", color="gray")
+        if auc is not None:
+            fpr, tpr, _ = roc_curve(truth, scores)
+            ax.plot(fpr, tpr, label=f"AUROC = {auc:.3f}")
+            ax.legend()
+        else:
+            ax.text(.5, .5, "Undefined: both outcome classes required", ha="center", fontsize=9)
+        ax.set(title=title, xlabel="False-positive rate", ylabel="True-positive rate", xlim=(0, 1), ylim=(0, 1))
+    fig.suptitle(f"Valid Clef scores: {clef_scores['auroc_scored_n']}; excluded: {clef_scores['auroc_excluded_n']}")
+    fig.savefig(out / "clef_roc.png"); plt.close(fig)
     fig, axes = plt.subplots(1, 4, figsize=(15, 3.5), constrained_layout=True)
     for ax, (name, pred) in zip(axes, predictions.items()):
         matrix = np.array([[int(((y == a) & (pred == b)).sum()) for b in (0, 1, -1)] for a in (0, 1)])

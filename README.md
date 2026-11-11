@@ -201,6 +201,17 @@ Under `runs/main/report/`:
 - `cascade_diagnostics.json`: fallback corrections, regressions, shared errors.
 - `confusion_matrices.png`, `cost_latency.png`, `coverage_tradeoff.png`: article
   figures. Also a diagnostic threshold-sweep CSV.
+- `clef_roc.png`: ROC curves for category classification and error detection.
+
+Clef also reports **classification AUROC** from its positive-category probability,
+and **error-detection AUROC** from `1 - confidence` against whether its verdict
+was wrong. The second metric tests the premise of confidence routing. Both use
+valid successful Clef scores only; scored/excluded counts are reported explicitly.
+AUROC is undefined if only one outcome class remains (for example, no errors).
+Failures remain counted in the other metrics as described above. Gemini returns
+only a label, so Gemini and cascade AUROCs are left unavailable; no comparable
+continuous score is invented from their binary decisions. AUROC measures ranking,
+not probability calibration. See [the metric documentation](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html).
 
 `routing_policy.json` records the thresholds chosen on development.
 The 2,000-resample bootstrap is over sampled test items, conditional on the

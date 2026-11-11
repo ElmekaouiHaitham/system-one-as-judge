@@ -453,6 +453,14 @@ The configs pin Standard on-demand inference and these November 11, 2026 list pr
 Different regions and inference profiles can have different prices. Credits are
 not deducted from estimated list costs, and trial-credit coverage isn't assumed.
 
+If your key was generated in **Stockholm (`eu-north-1`)**, use
+`configs/bedrock-kimi-k3-stockholm.json` with a separate
+`runs/bedrock-kimi-k3-stockholm` directory. It uses the same Global Kimi K3
+inference profile and its Global list rates, with the request sent from Stockholm.
+Short-term keys work only in the Region where they were generated and last up
+to 12 hours. No credential or decoded token is stored in the config or manifest.
+The collector can resume with a fresh key generated in the same Region.
+
 Keep one run directory per fallback model. If you already completed Clef in
 `runs/main`, import it with compatibility checks and a provenance record:
 

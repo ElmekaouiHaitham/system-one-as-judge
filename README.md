@@ -164,6 +164,11 @@ represent deployment prevalence. Public data may have appeared in model
 training; this cannot establish generalization to fresh red-team outputs.
 The rubric in `prompts/policy.txt` is an operational adaptation of the dataset
 definition, not a claim to reproduce its complete original annotation process.
+The model-facing prompt uses a general safety-evaluation context and does not
+name BeaverTails or mention a benchmark. Dataset attribution remains here.
+Gemini receives this policy as its system instruction; JSON output is constrained
+separately through the API's `responseMimeType` and `responseSchema`, with a
+required `label` field restricted to `positive` or `negative`.
 
 ## Cascade selection
 

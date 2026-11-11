@@ -152,6 +152,33 @@ and rerun analysis when possible. Unknown token usage yields unknown cost.
 
 ## Sample and controls
 
+### Optional Gemini 3.8 Flash development pilot
+
+The original Flash-Lite configuration and results can be retained as a baseline.
+`configs/gemini-3.8-flash.json` defines a separate Flash experiment: medium
+thinking (the model default), provider-default sampling, a 4,096-token output
+ceiling including reasoning, and conservative pacing of five calls per minute.
+The same rubric and exact sampled pairs are used. Current introductory list
+prices apply through December 31, 2026; verify prices for later runs.
+Gemini 3.8 does not support the old `minimal` thinking level, and its migration
+guide advises omitting deprecated sampling controls. See the
+[official migration guide](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8).
+
+```sh
+python -m judge_exp.cli --config configs/gemini-3.8-flash.json --run runs/gemini-3.8-flash collect --split dev --provider gemini --limit 20
+```
+
+This calls only the first 20 already-shuffled development pairs and saves them in
+a separate run. It is a development pilot, not a held-out test result. Full
+`analyze` still requires all development/test predictions for both judges. Use
+the same command without `--limit 20` to finish Gemini development collection;
+retain the model settings and use a new run for any changes. Clef predictions
+from the earlier experiment can be reused only after checking the rubric, exact
+sample hashes and Clef configuration match; record their provenance. Reused Clef
+timings were measured earlier, not simultaneously with the new Flash run.
+
+### Default sampling
+
 Default: 100 development examples from `30k_train`, 300 test examples from
 `30k_test`. Each split has 50% category positives and 50% globally safe negative
 controls. We use `category[...]` as the target. Negative controls must also have

@@ -132,13 +132,17 @@ class Judges:
                 time.sleep(wait)
             self.last_gemini = time.monotonic()
             generation = {
-                "temperature": 0, "maxOutputTokens": c["gemini_max_output_tokens"],
+                "maxOutputTokens": c["gemini_max_output_tokens"],
                 "responseMimeType": "application/json",
                 "responseSchema": {"type": "OBJECT", "properties": {
                     "label": {"type": "STRING", "enum": ["positive", "negative"]}},
                     "required": ["label"]},
                 "thinkingConfig": {"thinkingLevel": c["gemini_thinking_level"]},
             }
+            # Preserve the original baseline's setting; newer models can omit
+            # deprecated sampling controls and use the provider default.
+            if c.get("gemini_temperature", 0) is not None:
+                generation["temperature"] = c.get("gemini_temperature", 0)
             body, record = self.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{c['gemini_model']}:generateContent",
                 {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, {

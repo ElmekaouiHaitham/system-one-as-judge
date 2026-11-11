@@ -144,3 +144,25 @@ def test_live_wall_time_and_request_path_time_are_distinct(tmp_path, monkeypatch
     assert result["wall_latency_s"] == 5
     assert result["request_path_latency_s"] == 3
     assert result["list_cost_usd"] == pytest.approx(.3)
+
+
+def test_gemini_sampling_controls_can_be_omitted_without_changing_baseline(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-only")
+    for value in (None, 0, .7):
+        c = config()
+        c["gemini_temperature"] = value
+        judges = Judges(c, "policy")
+        captured = {}
+
+        def post(url, headers, payload, provider):
+            captured.update(payload)
+            return {"candidates": [{"finishReason": "STOP", "content": {
+                "parts": [{"text": '{"label":"negative"}'}]}}]}, {"latency_s": 1}
+
+        monkeypatch.setattr(judges, "post", post)
+        judges.judge("gemini", {"prompt": "test", "response": "test"})
+        generation = captured["generationConfig"]
+        if value is None:
+            assert "temperature" not in generation
+        else:
+            assert generation["temperature"] == value

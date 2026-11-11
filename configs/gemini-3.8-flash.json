@@ -1,0 +1,25 @@
+{
+  "seed": 42,
+  "dataset_revision": "8401fe609d288129cc684a9b3be6a93e41cfe678",
+  "dev_size": 100,
+  "test_size": 300,
+  "clef_model": "@cf/cloudflare/clef",
+  "clef_request_model": "clef",
+  "gemini_model": "gemini-3.8-flash",
+  "gemini_thinking_level": "medium",
+  "gemini_temperature": null,
+  "gemini_max_output_tokens": 4096,
+  "gemini_requests_per_minute": 5,
+  "timeout_seconds": 90,
+  "max_attempts": 4,
+  "threshold_grid": [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98, 1.0, 1.000001],
+  "max_dev_accuracy_drop": 0.02,
+  "prices_usd_per_million": {
+    "clef_input": 0.24,
+    "gemini_input": 0.75,
+    "gemini_output": 3.75,
+    "gemini_cached_input": 0.075
+  },
+  "pricing_checked_on": "2026-11-11",
+  "pricing_valid_through": "2026-12-31"
+}

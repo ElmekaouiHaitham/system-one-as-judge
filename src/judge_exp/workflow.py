@@ -1,5 +1,6 @@
 """Sequential collection, dev-only threshold freezing, then held-out analysis."""
 from datetime import datetime, timezone
+import json
 
 from .common import write_json
 from .experiment import collect, load_predictions, terminal_failure
@@ -29,8 +30,16 @@ def full_experiment(run, samples, config, policy, requests_per_minute=2, max_res
             print("Transient failure retained; resuming with persistent rate-limit cooldown.", flush=True)
         if split == "dev":
             frozen = freeze_policies(run, samples, config)
-            write_json(run / "routing_policy_before_test.json", {**frozen,
-                       "frozen_utc": datetime.now(timezone.utc).isoformat()})
+            freeze_path = run / "routing_policy_before_test.json"
+            if freeze_path.exists():
+                previous = json.loads(freeze_path.read_text(encoding="utf-8"))
+                if {k: previous[k] for k in ("selection_split", "policies")} != frozen:
+                    raise ValueError("Previously frozen policies differ; choose a new run")
+            else:
+                if load_predictions(run, "test", "gemini"):
+                    raise ValueError("Test collection already started without a recorded prior freeze; inspect the run")
+                write_json(freeze_path, {**frozen,
+                           "frozen_utc": datetime.now(timezone.utc).isoformat()})
             print("Cascade thresholds frozen from development data before test collection.", flush=True)
     analyze(run, samples, config)
     write_json(run / "workflow_status.json", {"status": "complete",

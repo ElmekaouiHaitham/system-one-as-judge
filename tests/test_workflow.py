@@ -41,3 +41,15 @@ def test_transient_restart_budget_is_bounded(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         workflow.full_experiment(tmp_path, {}, {}, "policy", max_restarts=2)
     assert len(calls) == 3
+
+
+def test_resume_preserves_original_threshold_freeze_timestamp(tmp_path, monkeypatch):
+    from judge_exp.common import write_json
+    frozen = {"selection_split": "dev", "policies": {}}
+    path = tmp_path / "routing_policy_before_test.json"
+    write_json(path, {**frozen, "frozen_utc": "original-before-test-time"})
+    monkeypatch.setattr(workflow, "collect", lambda *a, **kw: True)
+    monkeypatch.setattr(workflow, "freeze_policies", lambda *a: frozen)
+    monkeypatch.setattr(workflow, "analyze", lambda *a: None)
+    workflow.full_experiment(tmp_path, {}, {}, "policy")
+    assert json.loads(path.read_text())["frozen_utc"] == "original-before-test-time"

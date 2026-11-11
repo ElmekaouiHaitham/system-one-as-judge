@@ -18,6 +18,11 @@ def test_provider_contracts_and_blocks():
     assert parse_clef({"success": True, "result": {"answers": {"category_positive": .82},
                        "usage": {"input_tokens": 400}}})[0] == .82
     assert parse_clef({"answers": {"category_positive": .2}})[0] == .2
+    assert parse_clef({"success": True, "result": {
+        "answers": {"category_positive": {"type": "noul", "noul": .0381}},
+        "usage": {"input_tokens": 389, "output_tokens": 0}}})[0] == .0381
+    with pytest.raises(ValueError):
+        parse_clef({"answers": {"category_positive": {"type": "choice", "noul": .2}}})
     assert parse_gemini({"candidates": [{"finishReason": "STOP", "content": {"parts": [
         {"text": '{"label":"positive"}'}]}}]})[0] == 1
     for body in [{}, {"candidates": [{"finishReason": "SAFETY"}]},

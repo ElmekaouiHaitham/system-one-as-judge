@@ -28,7 +28,14 @@ def parse_clef(body):
     result = body.get("result", body)
     if not isinstance(result, dict):
         raise ValueError("Invalid Clef result object")
-    return probability(result["answers"]["category_positive"]), result.get("usage", {})
+    answer = result["answers"]["category_positive"]
+    # Workers AI wraps noul answers; the standalone SystemOne server may return
+    # the numeric probability directly.
+    if isinstance(answer, dict):
+        if answer.get("type") != "noul":
+            raise ValueError("Unexpected Clef answer type")
+        answer = answer["noul"]
+    return probability(answer), result.get("usage", {})
 
 
 def parse_gemini(body):

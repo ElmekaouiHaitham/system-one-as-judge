@@ -22,7 +22,7 @@ def test_no_bursts_and_cooldown_persist_across_resume(tmp_path):
     limiter.throttled(75)
     resumed = RateLimiter(2, path, clock=lambda: clock[0], sleep=sleep)
     assert resumed.wait() == 75
-    assert resumed.interval == 45
+    assert resumed.interval == 30
     assert max(sleeps) <= 30
     for _ in range(100):
         resumed.succeeded()
@@ -79,4 +79,19 @@ def test_every_retry_is_paced_and_initial_queue_wait_is_outside_latency(tmp_path
     assert r["retry_wait_s"] == 75
     assert r["request_latency_s"] == 2
     assert r["provider_latency_s"] == .5
-    assert r["rate_limit"]["effective_interval_s"] == 45
+    assert r["rate_limit"]["effective_interval_s"] == 30
+
+
+def test_repeated_throttles_extend_cooldown_but_success_restores_steady_pacing(tmp_path):
+    clock = [1000.0]
+    sleep = lambda n: clock.__setitem__(0, clock[0] + n)
+    limiter = RateLimiter(2, tmp_path / "limiter.json", clock=lambda: clock[0], sleep=sleep)
+    limiter.wait()
+    limiter.throttled()
+    assert limiter.wait() == 60
+    limiter.throttled()
+    assert limiter.wait() == 120
+    limiter.succeeded()
+    assert limiter.wait() == 30
+    limiter.throttled()
+    assert limiter.wait() == 60

@@ -489,8 +489,9 @@ python -m judge_exp.cli --config configs/bedrock-kimi-k3-stockholm.json --run ru
 This command resumes saved successes; it doesn't submit the dataset as a bulk
 job. There is one in-flight request, initially at most two Bedrock attempts per
 minute. A persistent local scheduler spaces retries as well as new examples.
-HTTP 429 causes a cooldown of at least 60 seconds and an increased interval;
-five successes gradually restore the original interval. `Retry-After` is
+HTTP 429 causes a cooldown of at least 60 seconds, increasing to 120 seconds for
+consecutive throttles. After success, the steady configured spacing resumes.
+`Retry-After` is
 honored, including HTTP-date and fractional-second values. The rate can never
 exceed the config's ceiling. The scheduler state survives process restarts.
 There are bounded automatic resumes for transient transport/service failures;
@@ -504,6 +505,13 @@ recorded separately from changing judging settings. Earlier outcomes collected
 under the original five-per-minute ceiling remain in the same cache with their
 original timings and retry history. Never describe the full run as having used
 one fixed request rate throughout.
+
+An initial `persistent_adaptive_v1` session also slowed future examples after a
+429. Once the account's reported K3 quota was checked (10M TPM), transport was
+changed to `persistent_paced_cooldown_v2`: retain a steady ceiling and apply
+cooldowns to throttled attempts. Shared-capacity errors can occur below quotas;
+the quota alone doesn't establish the cause of a specific error. Session and
+per-outcome strategy fields identify which transport policy was used.
 
 The workflow freezes `routing_policy_before_test.json` using only development
 data, collects the held-out test rows, then generates the report. Simulated

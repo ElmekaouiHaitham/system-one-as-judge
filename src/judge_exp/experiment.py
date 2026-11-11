@@ -110,7 +110,7 @@ def collect(run, samples, config, policy, splits, providers, limit=None, request
         # Preserve the immutable original manifest and record each collection session.
         with (Path(run) / "transport_sessions.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps({"started_utc": datetime.now(timezone.utc).isoformat(),
-                "max_requests_per_minute": rpm, "strategy": "persistent_adaptive_v1",
+                "max_requests_per_minute": rpm, "strategy": RateLimiter.STRATEGY,
                 "splits": splits, "providers": providers}) + "\n")
     for split in splits:
         for provider in providers:

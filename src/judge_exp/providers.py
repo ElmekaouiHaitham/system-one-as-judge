@@ -9,9 +9,9 @@ from .accounting import measurement
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, message, record):
+    def __init__(self, message, record, terminal=False):
         super().__init__(message)
-        self.record = record
+        self.record = {**record, "terminal_error": terminal}
 
 
 def probability(value):
@@ -123,7 +123,7 @@ class Judges:
             try:
                 p, usage = parse_clef(body)
             except (ValueError, KeyError, TypeError) as exc:
-                raise ProviderError(f"Invalid Clef verdict: {exc}", record) from None
+                raise ProviderError(f"Invalid Clef verdict: {exc}", record, terminal=True) from None
             label = int(p >= 0.5)
             extra = {"probability": p, "confidence": max(p, 1 - p)}
         else:
@@ -149,6 +149,6 @@ class Judges:
             try:
                 label, usage = parse_gemini(body)
             except (ValueError, KeyError, TypeError) as exc:
-                raise ProviderError(f"Invalid Gemini verdict: {exc}", record) from None
+                raise ProviderError(f"Invalid Gemini verdict: {exc}", record, terminal=True) from None
             extra = {}
         return {"label": label, **extra, **record}

@@ -59,11 +59,12 @@ def summarize_resources(clef, gemini, escalation=None, gemini_only=False):
     import numpy as np
     n = len(clef)
     escalation = np.zeros(n, dtype=bool) if escalation is None else np.asarray(escalation)
-    costs, latencies, retried = [], [], []
+    costs, latencies, retried, known_costs = [], [], [], []
     for i in range(n):
         stages = [gemini[i]] if gemini_only else [clef[i]] + ([gemini[i]] if escalation[i] else [])
         retries = [s.get("retry_count") for s in stages]
         retried.append(any(r > 0 for r in retries) if all(r is not None for r in retries) else None)
+        known_costs.append(sum(s.get("known_list_cost_usd", s.get("list_cost_usd")) or 0 for s in stages))
         for key, values in [("list_cost_usd", costs), ("latency_s", latencies)]:
             parts = [s.get(key) for s in stages]
             values.append(sum(parts) if all(v is not None and math.isfinite(v) for v in parts) else None)
@@ -71,6 +72,7 @@ def summarize_resources(clef, gemini, escalation=None, gemini_only=False):
     complete_time = all(t is not None for t in latencies)
     return {
         "list_cost_usd": sum(costs) if complete_cost else None,
+        "known_list_cost_subtotal_usd": sum(known_costs),
         "cost_per_1000_pairs_usd": sum(costs) / n * 1000 if complete_cost else None,
         "resource_priced_n": sum(c is not None for c in costs),
         "retried_pair_rate": sum(retried) / n if all(r is not None for r in retried) else None,

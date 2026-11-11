@@ -131,9 +131,13 @@ sample. A fresh clone regenerates the same sample using the pinned dataset
 revision and seed; `data/prepared/manifest.json` records the sample hashes.
 Collection and analysis can then be repeated as described below.
 
-The first failed request stops collection with a nonzero exit code so an invalid
-key or exhausted quota does not burn through a sample. Fix it and rerun the same
-command: successful calls are reused, failed calls are retried. Each response is
+Transport errors, HTTP errors, and exhausted retries stop collection with a nonzero
+exit code so an invalid key or exhausted quota does not burn through a sample.
+Fix the issue and rerun the same command: successful calls are reused and those
+transient failures can be retried. A completed provider response with a content
+block, invalid verdict, or truncation is instead retained as a terminal failed
+verdict and collection continues; it is never rerun for a better answer. Previously
+saved Gemini prompt blocks are also recognized on resume. Each response is
 saved immediately. Avoid running two collectors into the same run directory.
 Do not change your config/policy halfway through a run: the manifest rejects
 such changes. Use `--run runs/another_name` BEFORE the subcommand for a new run.
@@ -202,13 +206,20 @@ Under `runs/main/report/`:
   failure rate, bootstrap accuracy intervals and paired accuracy differences
   versus Gemini, routing rate, estimated list cost, cost per 1,000 pairs, mean,
   median, and 95th-percentile latency, the fraction of pairs requiring a retry,
-  and the count of fully priced pairs. The main latency chart uses median and p95.
+  and the count of fully priced pairs. The main latency chart uses median and p95
+  on a logarithmic seconds axis so both short responses and long retry tails are visible.
 - `predictions.csv`: IDs and per-system verdicts for tracing disagreements.
 - `control_slices.csv`: results for positives and safe controls.
 - `cascade_diagnostics.json`: fallback corrections, regressions, shared errors.
 - `confusion_matrices.png`, `cost_latency.png`, `coverage_tradeoff.png`: article
   figures. Also a diagnostic threshold-sweep CSV.
 - `clef_roc.png`: ROC curves for category classification and error detection.
+
+If required calls have missing usage, the cost chart hatches that system's bar
+and shows its known list-cost subtotal rather than inventing a complete total.
+`list_cost_usd` remains unavailable in the table; the subtotal is reported
+separately. Do not interpret incomplete-cost bars as exact totals or use them to
+claim an exact savings percentage.
 
 Clef also reports **classification AUROC** from its positive-category probability,
 and **error-detection AUROC** from `1 - confidence` against whether its verdict
@@ -243,6 +254,10 @@ Each record also retains every HTTP attempt's duration/status/usage,
 Transport errors, HTTP errors, blocked verdicts, and invalid JSON/verdicts preserve
 available timing and usage. A timed-out request may have incurred a charge even
 when no token counts were received; its cost stays unknown.
+When a transient failure is retried after restarting collection, analysis combines
+the failed and subsequent call durations, attempts, and known token costs for that
+example. Time between collector sessions is excluded. The original log records
+remain unchanged; the separate collection ledger reads every physical call once.
 
 **Cost:** use provider-reported token counts, including the input policy/schema,
 and configurable rates per million tokens:

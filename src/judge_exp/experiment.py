@@ -25,7 +25,35 @@ def bind_run(run, config, policy):
 
 def load_predictions(run, split, provider):
     path = Path(run) / f"{split}_{provider}.jsonl"
-    return {r["id"]: r for r in read_jsonl(path)} if path.exists() else {}
+    latest = {}
+    if not path.exists():
+        return latest
+    for record in read_jsonl(path):
+        previous = latest.get(record["id"])
+        if previous and previous["status"] == "error" and not terminal_failure(previous):
+            # Retain immutable logs, but aggregate transport-retry resources for
+            # an outcome completed after restarting the collector.
+            current = record
+            record = dict(current)
+            for key in ("latency_s", "request_latency_s", "retry_wait_s", "list_cost_usd", "cache_adjusted_cost_usd"):
+                parts = [previous.get(key), record.get(key)]
+                record[key] = sum(parts) if all(p is not None for p in parts) else None
+            for key in ("list_cost_usd", "cache_adjusted_cost_usd"):
+                record[f"known_{key}"] = (
+                    previous.get(f"known_{key}", previous.get(key)) or 0) + (
+                    current.get(f"known_{key}", current.get(key)) or 0)
+            record["attempts"] = previous.get("attempts", []) + record.get("attempts", [])
+            record["retry_count"] = previous.get("retry_count", 0) + record.get("retry_count", 0) + 1
+            record["collector_restarts"] = previous.get("collector_restarts", 0) + 1
+            record["latency_basis"] = "sum_of_call_durations; collector_restart_gaps_excluded"
+        latest[record["id"]] = record
+    return latest
+
+
+def terminal_failure(record):
+    # Recognize previously saved Gemini content blocks without rewriting the log.
+    return bool(record.get("terminal_error") or
+                record.get("raw", {}).get("promptFeedback", {}).get("blockReason"))
 
 
 def collect(run, samples, config, policy, splits, providers, limit=None):
@@ -35,7 +63,8 @@ def collect(run, samples, config, policy, splits, providers, limit=None):
             existing = load_predictions(run, split, provider)
             rows = samples[split][:limit] if limit else samples[split]
             for i, row in enumerate(rows, 1):
-                if existing.get(row["id"], {}).get("status") == "ok":
+                previous = existing.get(row["id"], {})
+                if previous.get("status") == "ok" or terminal_failure(previous):
                     continue
                 result = {"id": row["id"], "provider": provider,
                           "timestamp_utc": datetime.now(timezone.utc).isoformat()}
@@ -54,7 +83,7 @@ def collect(run, samples, config, policy, splits, providers, limit=None):
                     f.write(json.dumps(result, ensure_ascii=False, allow_nan=False) + "\n")
                     f.flush()
                 print(f"{split} {provider} {i}/{len(rows)}: {result['status']}", flush=True)
-                if result["status"] == "error":
+                if result["status"] == "error" and not terminal_failure(result):
                     print(f"Stopped after error: {result['error']}. Fix it and rerun to resume.")
                     return False
     return True

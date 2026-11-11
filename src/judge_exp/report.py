@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 
 from .common import write_json, read_jsonl
 from .accounting import summarize_resources
-from .experiment import load_predictions
+from .experiment import load_predictions, terminal_failure
 from .routing import route, select_thresholds
 
 
@@ -113,7 +113,9 @@ def analyze(run, samples, config):
             unknown = sum(r.get("list_cost_usd") is None for r in records)
             ledger.append({"split": split, "provider": provider, "collection_calls": len(records),
                            "http_attempts": sum(len(r.get("attempts", [])) or 1 for r in records),
-                           "failed_verdicts": sum(r["status"] != "ok" for r in records),
+                           "failed_collection_calls": sum(r["status"] != "ok" for r in records),
+                           "terminal_failed_outcomes": sum(r["status"] != "ok" and terminal_failure(r) for r in records),
+                           "transient_failed_calls": sum(r["status"] != "ok" and not terminal_failure(r) for r in records),
                            "known_list_cost_subtotal_usd": known, "unpriced_calls": unknown,
                            "complete_list_cost_usd": known if not unknown else None})
     write_json(out / "collection_accounting.json", {
@@ -172,12 +174,21 @@ def analyze(run, samples, config):
     fig.savefig(out / "confusion_matrices.png"); plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-    axes[0].bar(summary.system, pd.to_numeric(summary.list_cost_usd), color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
-    axes[0].set_title("Estimated list cost (USD, test sample)")
+    complete_costs = pd.to_numeric(summary.list_cost_usd)
+    cost_values = complete_costs.fillna(summary.known_list_cost_subtotal_usd)
+    bars = axes[0].bar(summary.system, cost_values, color=["#277da8", "#f2a541", "#43aa8b", "#9467bd"])
+    for bar, unknown in zip(bars, complete_costs.isna()):
+        if unknown:
+            bar.set_hatch("//")
+            axes[0].annotate("known subtotal", (bar.get_x()+bar.get_width()/2, bar.get_height()),
+                             xytext=(0, 4), textcoords="offset points", ha="center", fontsize=7)
+    axes[0].set_title("List cost (USD; hatched = incomplete usage)")
+    axes[0].margins(y=.15)
     positions = np.arange(len(summary))
     axes[1].bar(positions - .18, pd.to_numeric(summary.median_latency_s), width=.36, label="Median")
     axes[1].bar(positions + .18, pd.to_numeric(summary.p95_latency_s), width=.36, label="p95")
-    axes[1].set(xticks=positions, xticklabels=summary.system, title="Outcome latency, including retries (seconds)")
+    axes[1].set(xticks=positions, xticklabels=summary.system, title="Outcome latency, including retries", ylabel="Seconds (log scale)")
+    axes[1].set_yscale("log")
     axes[1].legend()
     for ax in axes:
         ax.tick_params(axis="x", rotation=20)

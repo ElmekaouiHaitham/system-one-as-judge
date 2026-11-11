@@ -38,6 +38,7 @@ def test_cascade_counts_only_required_calls_and_reports_latency_percentiles():
     assert r["p95_latency_s"] == pytest.approx(5.75)
     assert r["retried_pair_rate"] == .5
     assert summarize_resources(c, g, [True, True])["list_cost_usd"] is None
+    assert summarize_resources(c, g, [True, True])["known_list_cost_subtotal_usd"] == pytest.approx(.07)
 
 
 class Response:
@@ -96,6 +97,7 @@ def test_blocked_verdict_keeps_timing_usage_and_raw_response(monkeypatch):
         judges.judge("gemini", {"prompt": "test", "response": "test"})
     assert exc.value.record["latency_s"] >= 0
     assert exc.value.record["raw"] == body
+    assert exc.value.record["terminal_error"] is True
     assert exc.value.record["list_cost_usd"] == pytest.approx(.000025)
 
 

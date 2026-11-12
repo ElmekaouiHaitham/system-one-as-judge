@@ -31,6 +31,7 @@ def main():
     full.add_argument("--requests-per-minute", type=float, default=2)
     full.add_argument("--max-restarts", type=int, default=6, help="Bounded resumes for transient failures per split")
     sub.add_parser("analyze")
+    sub.add_parser("compare", help="Primary standalone model comparison using all collected examples")
     reuse = sub.add_parser("reuse-clef", help="Import compatible cached Clef calls with provenance")
     reuse.add_argument("--source", type=Path, required=True)
     cascade = sub.add_parser("cascade", help="Live selective calls using the frozen policy")
@@ -63,6 +64,10 @@ def main():
             raise SystemExit(1)
     elif args.command == "analyze":
         analyze(run, samples, config)
+    elif args.command == "compare":
+        from .comparison import compare_models
+        result = compare_models(run, samples, config)
+        print(json.dumps(result, indent=2))
     elif args.command == "reuse-clef":
         reuse_clef(run, args.source, config, policy)
         print("Reused compatible Clef outcomes; no model calls made.")

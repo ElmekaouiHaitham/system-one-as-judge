@@ -12,8 +12,27 @@ support **GLM-5** and **Kimi K3** with the same judging policy and samples. Thes
 adapters have offline contract tests; live access and model behavior require a
 successful pilot with your own account.
 
-**Question:** How much evaluation cost can confidence routing save, and which
-errors remain when uncertain Clef verdicts are escalated to Gemini?
+**Primary question:** How do Clef and the fixed LLM judge compare against the
+human reference labels? The primary comparison uses **all 400 collected pairs**
+(200 category-positive responses and 200 globally safe controls). Neither model
+is trained or fine-tuned; the rubric is frozen for both.
+
+**Secondary question:** What happens when a confidence cascade escalates from
+Clef to the LLM? Only this routing analysis needs the 100-pair calibration / 300-pair
+held-out division. The historical filenames `dev` and `test` name these router
+groups; both groups contribute to the primary standalone model comparison.
+
+`analyze` generates `report/standalone_metrics.json`, `.csv`, and
+`standalone_comparison.png` for the primary comparison. The existing
+`report/metrics.json` and cascade plots describe the secondary 300-pair analysis.
+To regenerate only the primary comparison from cached calls, use:
+
+```sh
+python -m judge_exp.cli --config configs/bedrock-kimi-k3-stockholm.json --run runs/bedrock-kimi-k3-stockholm compare
+```
+
+Changing a prompt or choosing a model using observed labels makes the comparison
+exploratory; report such changes and use fresh examples for confirmatory claims.
 
 | System | Decision |
 |---|---|

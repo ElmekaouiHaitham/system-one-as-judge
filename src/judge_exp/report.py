@@ -102,6 +102,8 @@ def freeze_policies(run, samples, config):
 
 
 def analyze(run, samples, config):
+    from .comparison import compare_models
+    compare_models(run, samples, config)
     fallback_name = config.get("fallback_display_name", "Gemini")
     display_names = {"clef": "Clef", "gemini": fallback_name,
                      "fixed": "Fixed cascade", "class_dependent": "Class-dependent cascade"}

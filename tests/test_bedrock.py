@@ -156,9 +156,9 @@ def test_report_names_model_and_separates_reused_collection_cost(tmp_path):
         rows, clef, fallback = [], [], []
         for i in range(8):
             label = i % 2
-            rows.append({"id": str(i), "label": label, "source_row": i,
+            rows.append({"id": f"{split}-{i}", "label": label, "source_row": i,
                          "control_type": "positive" if label else "safe_control"})
-            common = {"id": str(i), "status": "ok", "label": label,
+            common = {"id": f"{split}-{i}", "status": "ok", "label": label,
                       "latency_s": 2, "request_latency_s": 2, "retry_count": 0, "list_cost_usd": .01}
             clef.append({**common, "probability": .9 if label else .1, "confidence": .9})
             fallback.append({**common, "provider_latency_s": 1.5, "provider_attempt_latency_sum_s": 1.5})
